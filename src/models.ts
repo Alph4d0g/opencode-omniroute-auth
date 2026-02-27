@@ -1,5 +1,5 @@
 import type { OmniRouteConfig, OmniRouteModel, OmniRouteModelsResponse } from "./types.js";
-import { OMNIROUTE_DEFAULT_MODELS, MODEL_CACHE_TTL, REQUEST_TIMEOUT } from "./constants.js";
+import { OMNIROUTE_DEFAULT_MODELS, OMNIROUTE_ENDPOINTS, MODEL_CACHE_TTL, REQUEST_TIMEOUT } from "./constants.js";
 
 /**
  * Model cache entry
@@ -38,8 +38,8 @@ export async function fetchModels(
   }
 
   // Use default baseUrl if not provided to prevent undefined URL
-  const baseUrl = config.baseUrl || "http://localhost:20128/v1";
-  const modelsUrl = `${baseUrl}/models`;
+  const baseUrl = config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL;
+  const modelsUrl = `${baseUrl}${OMNIROUTE_ENDPOINTS.MODELS}`;
 
   console.log(`[OmniRoute] Fetching models from ${modelsUrl}`);
 

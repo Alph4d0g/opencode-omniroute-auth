@@ -1,6 +1,6 @@
 import type { PluginResult, AuthProvider, LoaderResult } from "@opencode-ai/plugin";
 import type { OmniRouteConfig, OmniRouteModel } from "./types.js";
-import { OMNIROUTE_PROVIDER_ID, OMNIROUTE_DEFAULT_MODELS } from "./constants.js";
+import { OMNIROUTE_PROVIDER_ID, OMNIROUTE_DEFAULT_MODELS, OMNIROUTE_ENDPOINTS } from "./constants.js";
 import { fetchModels, clearModelCache } from "./models.js";
 
 /**
@@ -83,7 +83,7 @@ function createAuthProvider(): AuthProvider {
 
           try {
             // Test the connection by fetching models
-            const modelsUrl = `${endpoint}/models`;
+            const modelsUrl = `${endpoint}${OMNIROUTE_ENDPOINTS.MODELS}`;
             const response = await fetch(modelsUrl, {
               method: "GET",
               headers: {
