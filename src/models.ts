@@ -37,7 +37,8 @@ export async function fetchModels(
     return modelCache.models;
   }
 
-  const baseUrl = config.baseUrl;
+  // Use default baseUrl if not provided to prevent undefined URL
+  const baseUrl = config.baseUrl || "http://localhost:20128/v1";
   const modelsUrl = `${baseUrl}/models`;
 
   console.log(`[OmniRoute] Fetching models from ${modelsUrl}`);

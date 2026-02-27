@@ -93,8 +93,8 @@ function createAuthProvider(): AuthProvider {
             });
 
             if (!response.ok) {
-              const errorText = await response.text();
-              console.error(`[OmniRoute] Connection failed: ${response.status} ${errorText}`);
+              // Sanitize error response - only log status, not response body to avoid leaking backend details
+              console.error(`[OmniRoute] Connection failed: ${response.status} ${response.statusText}`);
               return {
                 type: "failed",
                 error: `Connection failed: ${response.statusText}. Please check your endpoint and API key.`,

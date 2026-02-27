@@ -35,7 +35,7 @@
   "author": "",
   "license": "MIT",
   "peerDependencies": {
-    "@opencode-ai/plugin": "^0.1.0"
+    "@opencode-ai/plugin": "*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
