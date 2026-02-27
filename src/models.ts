@@ -24,17 +24,22 @@ let modelCache: ModelCache | null = null;
  */
 export async function fetchModels(
   config: OmniRouteConfig,
-  apiKey: string
+  apiKey: string,
+  forceRefresh: boolean = false
 ): Promise<OmniRouteModel[]> {
-  // Check cache first
-  // Validate TTL is positive to prevent unexpected cache behavior
-  const cacheTtl = config.modelCacheTtl && config.modelCacheTtl > 0 
-    ? config.modelCacheTtl 
-    : MODEL_CACHE_TTL;
-  
-  if (modelCache && Date.now() - modelCache.timestamp < cacheTtl) {
-    console.log("[OmniRoute] Using cached models");
-    return modelCache.models;
+  // Check cache first if not forcing refresh
+  if (!forceRefresh) {
+    // Validate TTL is positive to prevent unexpected cache behavior
+    const cacheTtl = config.modelCacheTtl && config.modelCacheTtl > 0 
+      ? config.modelCacheTtl 
+      : MODEL_CACHE_TTL;
+    
+    if (modelCache && Date.now() - modelCache.timestamp < cacheTtl) {
+      console.log("[OmniRoute] Using cached models");
+      return modelCache.models;
+    }
+  } else {
+    console.log("[OmniRoute] Forcing model refresh");
   }
 
   // Use default baseUrl if not provided to prevent undefined URL
@@ -156,5 +161,5 @@ export async function refreshModels(
   apiKey: string
 ): Promise<OmniRouteModel[]> {
   clearModelCache();
-  return fetchModels(config, apiKey);
+  return fetchModels(config, apiKey, true);
 }

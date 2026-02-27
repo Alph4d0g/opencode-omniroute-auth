@@ -142,7 +142,7 @@ function createAuthProvider(): AuthProvider {
         },
       },
     ],
-    loader: async ({ getAuth, providerConfig }: { getAuth: () => Promise<{ key?: string; config?: { endpoint?: string; apiKey?: string } } | null>; providerConfig?: { baseUrl?: string; apiKey?: string } }): Promise<LoaderResult> => {
+    loader: async ({ getAuth, providerConfig }: { getAuth: () => Promise<{ key?: string; config?: { endpoint?: string; apiKey?: string } } | null>; providerConfig?: { baseUrl?: string; apiKey?: string; refreshOnList?: boolean } }): Promise<LoaderResult> => {
       const auth = await getAuth();
 
       if (!auth) {
@@ -162,12 +162,15 @@ function createAuthProvider(): AuthProvider {
     const config: OmniRouteConfig = {
       baseUrl: auth.config?.endpoint || providerConfig?.baseUrl || "http://localhost:20128/v1",
       apiKey,
+      refreshOnList: providerConfig?.refreshOnList as boolean | undefined,
     };
 
       // Fetch available models (CRITICAL FEATURE)
       let availableModels: string[] = [];
       try {
-        const models = await fetchModels(config, config.apiKey);
+        // By default, refresh models on each list unless explicitly disabled
+        const forceRefresh = config.refreshOnList !== false;
+        const models = await fetchModels(config, config.apiKey, forceRefresh);
         availableModels = models.map((m) => m.id);
         console.log(`[OmniRoute] Available models: ${availableModels.join(", ")}`);
       } catch (error) {

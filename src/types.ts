@@ -36,6 +36,8 @@ export interface OmniRouteConfig {
   defaultModels?: OmniRouteModel[];
   /** Model cache TTL in milliseconds (default: 5 minutes) */
   modelCacheTtl?: number;
+  /** Whether to refresh models on each model listing (default: true) */
+  refreshOnList?: boolean;
 }
 
 /**
