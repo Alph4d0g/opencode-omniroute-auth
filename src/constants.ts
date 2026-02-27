@@ -1,18 +1,18 @@
 /**
  * OmniRoute provider ID
  */
-export const OMNIROUTE_PROVIDER_ID = "omniroute";
+export const OMNIROUTE_PROVIDER_ID = 'omniroute';
 
 /**
  * Default OmniRoute API endpoints
  */
 export const OMNIROUTE_ENDPOINTS = {
   /** Base URL for OmniRoute API */
-  BASE_URL: "http://localhost:20128/v1",
+  BASE_URL: 'http://localhost:20128/v1',
   /** Models endpoint */
-  MODELS: "/models",
+  MODELS: '/models',
   /** Chat completions endpoint */
-  CHAT_COMPLETIONS: "/chat/completions",
+  CHAT_COMPLETIONS: '/chat/completions',
 };
 
 /**
@@ -20,9 +20,9 @@ export const OMNIROUTE_ENDPOINTS = {
  */
 export const OMNIROUTE_DEFAULT_MODELS = [
   {
-    id: "gpt-4o",
-    name: "GPT-4o",
-    description: "GPT-4o model with full capabilities",
+    id: 'gpt-4o',
+    name: 'GPT-4o',
+    description: 'GPT-4o model with full capabilities',
     contextWindow: 128000,
     maxTokens: 4096,
     supportsStreaming: true,
@@ -30,9 +30,9 @@ export const OMNIROUTE_DEFAULT_MODELS = [
     supportsTools: true,
   },
   {
-    id: "gpt-4o-mini",
-    name: "GPT-4o Mini",
-    description: "Fast and cost-effective model for everyday tasks",
+    id: 'gpt-4o-mini',
+    name: 'GPT-4o Mini',
+    description: 'Fast and cost-effective model for everyday tasks',
     contextWindow: 128000,
     maxTokens: 4096,
     supportsStreaming: true,
@@ -40,8 +40,8 @@ export const OMNIROUTE_DEFAULT_MODELS = [
     supportsTools: true,
   },
   {
-    id: "claude-3-5-sonnet",
-    name: "Claude 3.5 Sonnet",
+    id: 'claude-3-5-sonnet',
+    name: 'Claude 3.5 Sonnet',
     description: "Anthropic's Claude 3.5 Sonnet",
     contextWindow: 200000,
     maxTokens: 8192,
@@ -50,8 +50,8 @@ export const OMNIROUTE_DEFAULT_MODELS = [
     supportsTools: true,
   },
   {
-    id: "llama-3-1-405b",
-    name: "Llama 3.1 405B",
+    id: 'llama-3-1-405b',
+    name: 'Llama 3.1 405B',
     description: "Meta's Llama 3.1 405B",
     contextWindow: 128000,
     maxTokens: 4096,

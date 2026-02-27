@@ -58,10 +58,12 @@ Once connected, OpenCode will automatically use OmniRoute for AI requests:
 
 ### Refresh Models
 
-To force a refresh of the model list:
+By default, the plugin automatically refreshes the model list every time you open the model selection menu (`refreshOnList: true`).
+
+If you disable this feature or want to force a refresh manually, you can use the built-in command:
 
 ```bash
-opencode omniroute-refresh-models
+/omniroute-refresh-models
 ```
 
 Or clear the cache programmatically:
@@ -98,6 +100,7 @@ While the plugin works out-of-the-box with `/connect`, you can also configure it
 | `apiKey` | string | Yes | API key for authentication |
 | `defaultModels` | array | No | Default models to use if `/v1/models` fails |
 | `modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
+| `refreshOnList` | boolean | No | Whether to refresh models on each model listing (default: true) |
 
 ## Dynamic Model Fetching
 
@@ -106,8 +109,8 @@ This plugin automatically fetches available models from OmniRoute's `/v1/models`
 ### How It Works
 
 1. On first request, the plugin fetches models from `/v1/models`
-2. Models are cached for 5 minutes (configurable via `modelCacheTtl`)
-3. Subsequent requests use cached models for better performance
+2. By default, models are refreshed every time you open the model list (`refreshOnList: true`)
+3. If `refreshOnList` is disabled, models are cached for 5 minutes (configurable via `modelCacheTtl`)
 4. If the API is unavailable, fallback models are used
 
 ## Default Models
@@ -131,6 +134,7 @@ interface OmniRouteConfig {
   apiKey: string;
   defaultModels?: OmniRouteModel[];
   modelCacheTtl?: number;
+  refreshOnList?: boolean;
 }
 
 interface OmniRouteModel {

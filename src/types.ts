@@ -20,7 +20,7 @@ export interface OmniRouteModel {
  * OmniRoute API response for /v1/models
  */
 export interface OmniRouteModelsResponse {
-  object: "list";
+  object: 'list';
   data: OmniRouteModel[];
 }
 
@@ -36,6 +36,8 @@ export interface OmniRouteConfig {
   defaultModels?: OmniRouteModel[];
   /** Model cache TTL in milliseconds (default: 5 minutes) */
   modelCacheTtl?: number;
+  /** Whether to refresh models on each model listing (default: true) */
+  refreshOnList?: boolean;
 }
 
 /**
