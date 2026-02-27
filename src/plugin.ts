@@ -1,6 +1,6 @@
 import type { PluginResult, AuthProvider, LoaderResult } from "@opencode-ai/plugin";
 import type { OmniRouteConfig, OmniRouteModel } from "./types.js";
-import { OMNIROUTE_PROVIDER_ID, OMNIROUTE_DEFAULT_MODELS, OMNIROUTE_ENDPOINTS } from "./constants.js";
+import { OMNIROUTE_PROVIDER_ID, OMNIROUTE_DEFAULT_MODELS, OMNIROUTE_ENDPOINTS, REQUEST_TIMEOUT } from "./constants.js";
 import { fetchModels, clearModelCache } from "./models.js";
 
 /**
@@ -81,6 +81,10 @@ function createAuthProvider(): AuthProvider {
         authorize: async ({ endpoint, apiKey }: { endpoint: string; apiKey: string }) => {
           console.log("[OmniRoute] Validating connection...");
 
+          // Add timeout to prevent hanging on slow/unresponsive servers
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
           try {
             // Test the connection by fetching models
             const modelsUrl = `${endpoint}${OMNIROUTE_ENDPOINTS.MODELS}`;
@@ -90,6 +94,7 @@ function createAuthProvider(): AuthProvider {
                 Authorization: `Bearer ${apiKey}`,
                 "Content-Type": "application/json",
               },
+              signal: controller.signal,
             });
 
             if (!response.ok) {
@@ -117,11 +122,22 @@ function createAuthProvider(): AuthProvider {
               },
             };
           } catch (error) {
+            // Handle abort/timeout errors specially
+            if (error instanceof Error && error.name === "AbortError") {
+              console.error("[OmniRoute] Connection timed out");
+              return {
+                type: "failed",
+                error: "Connection timed out. Please check your endpoint URL and try again.",
+              };
+            }
             console.error("[OmniRoute] Connection error:", error);
             return {
               type: "failed",
               error: `Connection error: ${error instanceof Error ? error.message : "Unknown error"}. Please check your endpoint URL.`,
             };
+          } finally {
+            // Always clear timeout to prevent memory leaks
+            clearTimeout(timeoutId);
           }
         },
       },
