@@ -10,9 +10,17 @@ interface ModelCache {
 }
 
 /**
- * In-memory model cache
+ * In-memory model cache keyed by endpoint and API key
  */
-let modelCache: ModelCache | null = null;
+const modelCache = new Map<string, ModelCache>();
+
+/**
+ * Generate a cache key for a given configuration
+ */
+function getCacheKey(config: OmniRouteConfig, apiKey: string): string {
+  const baseUrl = config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL;
+  return `${baseUrl}:${apiKey}`;
+}
 
 /**
  * Fetch models from OmniRoute /v1/models endpoint
@@ -27,6 +35,8 @@ export async function fetchModels(
   apiKey: string,
   forceRefresh: boolean = false
 ): Promise<OmniRouteModel[]> {
+  const cacheKey = getCacheKey(config, apiKey);
+
   // Check cache first if not forcing refresh
   if (!forceRefresh) {
     // Validate TTL is positive to prevent unexpected cache behavior
@@ -34,9 +44,10 @@ export async function fetchModels(
       ? config.modelCacheTtl 
       : MODEL_CACHE_TTL;
     
-    if (modelCache && Date.now() - modelCache.timestamp < cacheTtl) {
+    const cached = modelCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < cacheTtl) {
       console.log("[OmniRoute] Using cached models");
-      return modelCache.models;
+      return cached.models;
     }
   } else {
     console.log("[OmniRoute] Forcing model refresh");
@@ -98,10 +109,10 @@ export async function fetchModels(
       }));
 
     // Update cache
-    modelCache = {
+    modelCache.set(cacheKey, {
       models,
       timestamp: Date.now(),
-    };
+    });
 
     console.log(`[OmniRoute] Successfully fetched ${models.length} models`);
     return models;
@@ -109,9 +120,10 @@ export async function fetchModels(
     console.error("[OmniRoute] Error fetching models:", error);
 
     // Return cached models if available (even if expired)
-    if (modelCache) {
+    const cached = modelCache.get(cacheKey);
+    if (cached) {
       console.log("[OmniRoute] Returning expired cached models as fallback");
-      return modelCache.models;
+      return cached.models;
     }
 
     // Return default models as last resort
@@ -125,29 +137,43 @@ export async function fetchModels(
 
 /**
  * Clear the model cache
+ * @param config - Optional OmniRoute configuration to clear specific cache
+ * @param apiKey - Optional API key to clear specific cache
  */
-export function clearModelCache(): void {
-  modelCache = null;
-  console.log("[OmniRoute] Model cache cleared");
+export function clearModelCache(config?: OmniRouteConfig, apiKey?: string): void {
+  if (config && apiKey) {
+    const cacheKey = getCacheKey(config, apiKey);
+    modelCache.delete(cacheKey);
+    console.log(`[OmniRoute] Model cache cleared for ${cacheKey}`);
+  } else {
+    modelCache.clear();
+    console.log("[OmniRoute] All model caches cleared");
+  }
 }
 
 /**
  * Get cached models without fetching
+ * @param config - OmniRoute configuration
+ * @param apiKey - API key for authentication
  * @returns Cached models or null
  */
-export function getCachedModels(): OmniRouteModel[] | null {
-  return modelCache?.models || null;
+export function getCachedModels(config: OmniRouteConfig, apiKey: string): OmniRouteModel[] | null {
+  const cacheKey = getCacheKey(config, apiKey);
+  return modelCache.get(cacheKey)?.models || null;
 }
 
 /**
  * Check if cache is valid
  * @param config - OmniRoute configuration
+ * @param apiKey - API key for authentication
  * @returns True if cache is valid
  */
-export function isCacheValid(config: OmniRouteConfig): boolean {
-  if (!modelCache) return false;
+export function isCacheValid(config: OmniRouteConfig, apiKey: string): boolean {
+  const cacheKey = getCacheKey(config, apiKey);
+  const cached = modelCache.get(cacheKey);
+  if (!cached) return false;
   const ttl = config.modelCacheTtl || MODEL_CACHE_TTL;
-  return Date.now() - modelCache.timestamp < ttl;
+  return Date.now() - cached.timestamp < ttl;
 }
 
 /**

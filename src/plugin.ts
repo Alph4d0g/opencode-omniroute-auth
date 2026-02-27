@@ -71,9 +71,6 @@ function createAuthProvider(): AuthProvider {
               if (!value || value.trim() === "") {
                 return "API key is required";
               }
-              if (!value.startsWith("sk-")) {
-                return "API key should start with 'sk-'";
-              }
               return true;
             },
           },
@@ -151,19 +148,19 @@ function createAuthProvider(): AuthProvider {
         );
       }
 
-    // Get configuration from auth or providerConfig
-    const apiKey = auth.key || auth.config?.apiKey || providerConfig?.apiKey;
-    if (!apiKey) {
-      throw new Error(
-        "No API key available. Please run '/connect omniroute' to set up your OmniRoute connection."
-      );
-    }
-    
-    const config: OmniRouteConfig = {
-      baseUrl: auth.config?.endpoint || providerConfig?.baseUrl || "http://localhost:20128/v1",
-      apiKey,
-      refreshOnList: providerConfig?.refreshOnList as boolean | undefined,
-    };
+      // Get configuration from auth or providerConfig
+      const apiKey = auth.key || auth.config?.apiKey || providerConfig?.apiKey;
+      if (!apiKey) {
+        throw new Error(
+          "No API key available. Please run '/connect omniroute' to set up your OmniRoute connection."
+        );
+      }
+      
+      const config: OmniRouteConfig = {
+        baseUrl: auth.config?.endpoint || providerConfig?.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL,
+        apiKey,
+        refreshOnList: providerConfig?.refreshOnList as boolean | undefined,
+      };
 
       // Fetch available models (CRITICAL FEATURE)
       let availableModels: string[] = [];
@@ -203,8 +200,9 @@ function createFetchInterceptor(
     const url = input instanceof Request ? input.url : input.toString();
     
     // Only intercept requests to the configured OmniRoute base URL
-    // Removed overly broad "omniroute" substring check that could match unintended URLs
-    const isOmniRouteRequest = url.startsWith(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
+    // Ensure baseUrl ends with a slash for safe prefix matching to prevent domain spoofing
+    const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+    const isOmniRouteRequest = url === baseUrl || url.startsWith(normalizedBaseUrl);
 
     if (!isOmniRouteRequest) {
       // Pass through non-OmniRoute requests

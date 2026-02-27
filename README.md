@@ -134,6 +134,7 @@ interface OmniRouteConfig {
   apiKey: string;
   defaultModels?: OmniRouteModel[];
   modelCacheTtl?: number;
+  refreshOnList?: boolean;
 }
 
 interface OmniRouteModel {
