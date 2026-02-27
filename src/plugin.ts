@@ -204,7 +204,7 @@ function createFetchInterceptor(
     
     // Only intercept requests to the configured OmniRoute base URL
     // Removed overly broad "omniroute" substring check that could match unintended URLs
-    const isOmniRouteRequest = url.startsWith(baseUrl);
+    const isOmniRouteRequest = url.startsWith(baseUrl.endsWith('/') ? baseUrl : baseUrl + '/');
 
     if (!isOmniRouteRequest) {
       // Pass through non-OmniRoute requests
