@@ -109,7 +109,7 @@ export async function fetchModels(
         name: model.name || model.id,
         description: model.description || `OmniRoute model: ${model.id}`,
         contextWindow: model.contextWindow ?? 4096,
-        maxTokens: model.maxTokens || 4096,
+        maxTokens: model.maxTokens ?? 4096,
         supportsStreaming: model.supportsStreaming ?? true,
         supportsVision: model.supportsVision ?? false,
         supportsTools: model.supportsTools ?? true,
