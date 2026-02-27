@@ -54,7 +54,10 @@ function createAuthProvider(): AuthProvider {
                 return "Endpoint is required";
               }
               try {
-                new URL(value);
+                const url = new URL(value);
+                if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+                  return 'Please enter a valid HTTP or HTTPS URL';
+                }
                 return true;
               } catch {
                 return "Please enter a valid URL";
