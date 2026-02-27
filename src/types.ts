@@ -20,7 +20,7 @@ export interface OmniRouteModel {
  * OmniRoute API response for /v1/models
  */
 export interface OmniRouteModelsResponse {
-  object: "list";
+  object: 'list';
   data: OmniRouteModel[];
 }
 

@@ -1,7 +1,7 @@
 // Type declarations for @opencode-ai/plugin
 // This is a stub for development - actual types come from the peer dependency
 
-declare module "@opencode-ai/plugin" {
+declare module '@opencode-ai/plugin' {
   export interface PluginResult {
     config?: {
       commands?: Array<{
@@ -27,14 +27,14 @@ declare module "@opencode-ai/plugin" {
     id: string;
     name: string;
     description: string;
-    type: "oauth" | "api";
+    type: 'oauth' | 'api';
     prompts?: Prompt[];
     authorize?: (params: { endpoint: string; apiKey: string }) => Promise<AuthorizeResult>;
   }
 
   export interface Prompt {
     key: string;
-    type: "text" | "select";
+    type: 'text' | 'select';
     label: string;
     message: string;
     placeholder?: string;
@@ -58,7 +58,7 @@ declare module "@opencode-ai/plugin" {
   }
 
   export interface AuthorizeResult {
-    type: "success" | "failed";
+    type: 'success' | 'failed';
     key?: string;
     provider?: string;
     config?: Record<string, unknown>;
