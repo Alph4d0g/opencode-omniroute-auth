@@ -83,6 +83,7 @@ try {
   ```typescript
   const headers = new Headers(init?.headers);
   headers.set('Authorization', `Bearer ${apiKey}`);
+  headers.set('Content-Type', 'application/json');
   ```
 - **URLs**: Handle both `Request` objects and string URLs safely.
   ```typescript
