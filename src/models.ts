@@ -58,8 +58,8 @@ export async function fetchModels(
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[OmniRoute] Failed to fetch models: ${response.status} ${errorText}`);
+      // Sanitize error - only log status, not response body
+      console.error(`[OmniRoute] Failed to fetch models: ${response.status} ${response.statusText}`);
       throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
     }
 
