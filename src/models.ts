@@ -74,19 +74,23 @@ export async function fetchModels(
     
     const data = rawData as OmniRouteModelsResponse;
 
-    // Transform and validate models
-    const models = data.data.map((model) => ({
-      ...model,
-      // Ensure required fields
-      id: model.id,
-      name: model.name || model.id,
-      description: model.description || `OmniRoute model: ${model.id}`,
-      contextWindow: model.contextWindow || 4096,
-      maxTokens: model.maxTokens || 4096,
-      supportsStreaming: model.supportsStreaming ?? true,
-      supportsVision: model.supportsVision ?? false,
-      supportsTools: model.supportsTools ?? true,
-    }));
+    // Transform and validate models - filter out invalid entries
+    const models = data.data
+      .filter((model): model is OmniRouteModel => 
+        model !== null && model !== undefined && typeof model.id === 'string'
+      )
+      .map((model) => ({
+        ...model,
+        // Ensure required fields
+        id: model.id,
+        name: model.name || model.id,
+        description: model.description || `OmniRoute model: ${model.id}`,
+        contextWindow: model.contextWindow || 4096,
+        maxTokens: model.maxTokens || 4096,
+        supportsStreaming: model.supportsStreaming ?? true,
+        supportsVision: model.supportsVision ?? false,
+        supportsTools: model.supportsTools ?? true,
+      }));
 
     // Update cache
     modelCache = {
