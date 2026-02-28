@@ -1,5 +1,9 @@
 import type { Plugin, Hooks } from '@opencode-ai/plugin';
-import type { OmniRouteConfig, OmniRouteModel } from './types.js';
+import type {
+  OmniRouteConfig,
+  OmniRouteModel,
+  OmniRouteProviderModel,
+} from './types.js';
 import {
   OMNIROUTE_PROVIDER_ID,
   OMNIROUTE_DEFAULT_MODELS,
@@ -15,52 +19,6 @@ type AuthHook = NonNullable<Hooks['auth']>;
 type AuthLoader = NonNullable<AuthHook['loader']>;
 type AuthAccessor = Parameters<AuthLoader>[0];
 type ProviderDefinition = Parameters<AuthLoader>[1];
-
-type ProviderModelModalities = {
-  text: boolean;
-  image: boolean;
-  audio: boolean;
-  video: boolean;
-  pdf: boolean;
-};
-
-type ProviderModel = {
-  id: string;
-  name: string;
-  providerID: string;
-  family: string;
-  release_date: string;
-  api: {
-    id: string;
-    url: string;
-    npm: string;
-  };
-  capabilities: {
-    temperature: boolean;
-    reasoning: boolean;
-    attachment: boolean;
-    toolcall: boolean;
-    input: ProviderModelModalities;
-    output: ProviderModelModalities;
-    interleaved: boolean;
-  };
-  cost: {
-    input: number;
-    output: number;
-    cache: {
-      read: number;
-      write: number;
-    };
-  };
-  limit: {
-    context: number;
-    output: number;
-  };
-  options: Record<string, unknown>;
-  headers: Record<string, string>;
-  status: 'active';
-  variants: Record<string, unknown>;
-};
 
 export const OmniRouteAuthPlugin: Plugin = async (_input) => {
   return {
@@ -109,7 +67,7 @@ async function loadProviderOptions(
   provider: ProviderDefinition,
 ): Promise<Record<string, unknown>> {
   const auth = await getAuth();
-  if (auth.type !== 'api') {
+  if (!auth || auth.type !== 'api') {
     throw new Error(
       "No API key available. Please run '/connect omniroute' to set up your OmniRoute connection.",
     );
@@ -163,7 +121,18 @@ function getBaseUrl(options?: Record<string, unknown>): string {
     return OMNIROUTE_ENDPOINTS.BASE_URL;
   }
 
-  return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      console.warn(`[OmniRoute] Ignoring unsupported baseURL protocol: ${parsed.protocol}`);
+      return OMNIROUTE_ENDPOINTS.BASE_URL;
+    }
+
+    return trimmed;
+  } catch {
+    console.warn(`[OmniRoute] Ignoring invalid baseURL: ${trimmed}`);
+    return OMNIROUTE_ENDPOINTS.BASE_URL;
+  }
 }
 
 function getPositiveNumber(
@@ -190,7 +159,7 @@ function getBoolean(
 
 function replaceProviderModels(
   provider: ProviderDefinition,
-  models: Record<string, ProviderModel>,
+  models: Record<string, OmniRouteProviderModel>,
 ): void {
   if (isRecord(provider.models)) {
     for (const key of Object.keys(provider.models)) {
@@ -207,15 +176,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function toProviderModels(models: OmniRouteModel[], baseUrl: string): Record<string, ProviderModel> {
-  const entries: Array<[string, ProviderModel]> = models.map((model) => [
+function toProviderModels(
+  models: OmniRouteModel[],
+  baseUrl: string,
+): Record<string, OmniRouteProviderModel> {
+  const entries: Array<[string, OmniRouteProviderModel]> = models.map((model) => [
     model.id,
     toProviderModel(model, baseUrl),
   ]);
   return Object.fromEntries(entries);
 }
 
-function toProviderModel(model: OmniRouteModel, baseUrl: string): ProviderModel {
+function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProviderModel {
   const supportsVision = model.supportsVision === true;
   const supportsTools = model.supportsTools !== false;
 
@@ -271,11 +243,8 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): ProviderModel 
 }
 
 function getModelFamily(modelId: string): string {
-  const parts = modelId.split('-');
-  if (parts.length >= 2) {
-    return `${parts[0]}-${parts[1]}`;
-  }
-  return parts[0] || modelId;
+  const [family] = modelId.split('-');
+  return family || modelId;
 }
 
 /**
@@ -305,9 +274,15 @@ function createFetchInterceptor(
 
     console.log(`[OmniRoute] Intercepting request to ${url}`);
 
-    // Use Headers constructor for proper header normalization
-    // Handles both plain objects and Headers instances correctly
-    const headers = new Headers(init?.headers);
+    // Merge headers from Request and init to avoid dropping existing headers
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    if (init?.headers) {
+      const initHeaders = new Headers(init.headers);
+      initHeaders.forEach((value, key) => {
+        headers.set(key, value);
+      });
+    }
+
     headers.set('Authorization', `Bearer ${config.apiKey}`);
     headers.set('Content-Type', 'application/json');
 

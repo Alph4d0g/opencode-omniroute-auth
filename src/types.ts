@@ -40,6 +40,52 @@ export interface OmniRouteConfig {
   refreshOnList?: boolean;
 }
 
+export interface OmniRouteProviderModelModalities {
+  text: boolean;
+  image: boolean;
+  audio: boolean;
+  video: boolean;
+  pdf: boolean;
+}
+
+export interface OmniRouteProviderModel {
+  id: string;
+  name: string;
+  providerID: string;
+  family: string;
+  release_date: string;
+  api: {
+    id: string;
+    url: string;
+    npm: string;
+  };
+  capabilities: {
+    temperature: boolean;
+    reasoning: boolean;
+    attachment: boolean;
+    toolcall: boolean;
+    input: OmniRouteProviderModelModalities;
+    output: OmniRouteProviderModelModalities;
+    interleaved: boolean;
+  };
+  cost: {
+    input: number;
+    output: number;
+    cache: {
+      read: number;
+      write: number;
+    };
+  };
+  limit: {
+    context: number;
+    output: number;
+  };
+  options: Record<string, unknown>;
+  headers: Record<string, string>;
+  status: 'active';
+  variants: Record<string, unknown>;
+}
+
 /**
  * API Error response
  */
