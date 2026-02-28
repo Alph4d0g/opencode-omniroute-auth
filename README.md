@@ -20,7 +20,7 @@
 {
   "plugin": [
     "opencode-omniroute-auth"
-  ],
+  ]
 }
 ```
 
