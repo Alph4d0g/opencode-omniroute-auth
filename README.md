@@ -7,7 +7,7 @@
 - ✅ **Simple `/connect` Command** - No manual configuration needed
 - ✅ **API Key Authentication** - Simple and secure API key-based auth
 - ✅ **Dynamic Model Fetching** - Automatically fetches available models from `/v1/models` endpoint
-- ✅ **Automatic Configuration** - Plugin sets itself up automatically
+- ✅ **Provider Auto-Registration** - Registers an `omniroute` provider via plugin hooks
 - ✅ **Model Caching** - Intelligent caching with TTL for better performance
 - ✅ **Fallback Models** - Default models when API is unavailable
 
@@ -33,14 +33,11 @@ Simply run the `/connect` command in OpenCode:
 /connect omniroute
 ```
 
-The plugin will prompt you for:
-- **Endpoint**: Your OmniRoute API endpoint (default: `http://localhost:20128/v1`)
-- **API Key**: Your OmniRoute API key (starts with `sk-`)
+The plugin will prompt you for your **API key**.
 
 ### 3. Done! 🎉
 
 The plugin automatically:
-- Validates your connection
 - Fetches available models from `/v1/models`
 - Configures OpenCode to use OmniRoute
 - Stores your credentials securely
@@ -58,15 +55,9 @@ Once connected, OpenCode will automatically use OmniRoute for AI requests:
 
 ### Refresh Models
 
-By default, the plugin automatically refreshes the model list every time you open the model selection menu (`refreshOnList: true`).
+By default, the plugin refreshes the model list whenever provider options are reloaded (`refreshOnList: true`).
 
-If you disable this feature or want to force a refresh manually, you can use the built-in command:
-
-```bash
-/omniroute-refresh-models
-```
-
-Or clear the cache programmatically:
+You can disable refreshes by setting `provider.omniroute.options.refreshOnList` to `false` and clear the cache programmatically:
 
 ```typescript
 import { clearModelCache } from "opencode-omniroute-auth";
@@ -80,27 +71,31 @@ While the plugin works out-of-the-box with `/connect`, you can also configure it
 
 ```json
 {
-  "plugins": [
+  "plugin": [
     "opencode-omniroute-auth"
   ],
-  "auth": {
+  "provider": {
     "omniroute": {
-      "baseUrl": "http://localhost:20128/v1",
-      "apiKey": "your-api-key"
+      "options": {
+        "baseURL": "http://localhost:20128/v1",
+        "refreshOnList": true,
+        "modelCacheTtl": 300000
+      }
     }
   }
 }
 ```
 
+Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.json`.
+
 ### Configuration Options
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
-| `baseUrl` | string | Yes | OmniRoute API base URL (default: `http://localhost:20128/v1`) |
-| `apiKey` | string | Yes | API key for authentication |
-| `defaultModels` | array | No | Default models to use if `/v1/models` fails |
-| `modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
-| `refreshOnList` | boolean | No | Whether to refresh models on each model listing (default: true) |
+| `plugin` | string[] | No | npm plugin packages to load (use `opencode-omniroute-auth` when installed from npm) |
+| `provider.omniroute.options.baseURL` | string | No | OmniRoute API base URL (default: `http://localhost:20128/v1`) |
+| `provider.omniroute.options.modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
+| `provider.omniroute.options.refreshOnList` | boolean | No | Whether to refresh models when provider options load (default: true) |
 
 ## Dynamic Model Fetching
 
@@ -157,14 +152,10 @@ interface OmniRouteModel {
 
 ```typescript
 import { 
-  OmniRouteAuthPlugin,
   fetchModels,
   clearModelCache,
   refreshModels 
 } from "opencode-omniroute-auth";
-
-// Get the plugin
-const plugin = OmniRouteAuthPlugin();
 
 // Fetch models manually
 const models = await fetchModels(config, apiKey);
@@ -198,7 +189,7 @@ npm run clean
 
 If you see "Connection failed" when running `/connect omniroute`:
 
-1. **Check your endpoint URL** - Make sure it's a valid URL (e.g., `http://localhost:20128/v1`)
+1. **Check your configured base URL** - Ensure `provider.omniroute.options.baseURL` points to your OmniRoute endpoint
 2. **Verify your API key** - Ensure your API key starts with `sk-` and is valid
 3. **Check OmniRoute is running** - Ensure your OmniRoute instance is accessible
 
@@ -207,8 +198,10 @@ If you see "Connection failed" when running `/connect omniroute`:
 If models aren't loading:
 
 1. Check your OmniRoute `/v1/models` endpoint is accessible
-2. Run `opencode omniroute-refresh-models` to clear the cache
-3. Check the OpenCode logs for error messages
+2. Ensure `provider.omniroute.options.baseURL` points to your OmniRoute endpoint
+3. Re-run `/connect omniroute` to refresh your API key
+4. If you use the package programmatically, call `clearModelCache()`
+5. Check the OpenCode logs for error messages
 
 ## License
 
