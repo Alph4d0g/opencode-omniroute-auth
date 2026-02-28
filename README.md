@@ -13,16 +13,15 @@
 
 ## Installation
 
-```bash
-npm install opencode-omniroute-auth
-```
-
 ## Quick Start
 
-### 1. Install the Plugin
-
-```bash
-npm install opencode-omniroute-auth
+### 1. Add plugin to opencode config
+```json
+{
+  "plugin": [
+    "opencode-omniroute-auth"
+  ],
+}
 ```
 
 ### 2. Connect to OmniRoute
