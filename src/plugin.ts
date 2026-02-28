@@ -1,204 +1,259 @@
-import type { PluginResult, AuthProvider, LoaderResult } from '@opencode-ai/plugin';
+import type { Plugin, Hooks } from '@opencode-ai/plugin';
 import type { OmniRouteConfig, OmniRouteModel } from './types.js';
 import {
   OMNIROUTE_PROVIDER_ID,
   OMNIROUTE_DEFAULT_MODELS,
   OMNIROUTE_ENDPOINTS,
-  REQUEST_TIMEOUT,
 } from './constants.js';
-import { fetchModels, clearModelCache } from './models.js';
+import { fetchModels } from './models.js';
 
-/**
- * OmniRoute Authentication Plugin for OpenCode
- *
- * This plugin provides:
- * - API key authentication via /connect command
- * - Dynamic model fetching via /v1/models endpoint
- * - Automatic configuration setup without manual config editing
- */
-type LoaderContext = {
-  getAuth: () => Promise<{ key?: string; config?: { endpoint?: string; apiKey?: string } } | null>;
-  providerConfig?: { baseUrl?: string; apiKey?: string; refreshOnList?: boolean };
+const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
+const OMNIROUTE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
+
+type AuthHook = NonNullable<Hooks['auth']>;
+type AuthLoader = NonNullable<AuthHook['loader']>;
+type AuthAccessor = Parameters<AuthLoader>[0];
+type ProviderDefinition = Parameters<AuthLoader>[1];
+
+type ProviderModelModalities = {
+  text: boolean;
+  image: boolean;
+  audio: boolean;
+  video: boolean;
+  pdf: boolean;
 };
 
-export function OmniRouteAuthPlugin(): PluginResult {
-  return {
-    config: {
-      commands: [
-        {
-          name: 'omniroute-refresh-models',
-          description: 'Refresh available models from OmniRoute',
-          action: async () => {
-            clearModelCache();
-            console.log(
-              '[OmniRoute] Model cache cleared. Models will be refreshed on next request.',
-            );
-          },
-        },
-      ],
-    },
-    auth: createAuthProvider(),
+type ProviderModel = {
+  id: string;
+  name: string;
+  providerID: string;
+  family: string;
+  release_date: string;
+  api: {
+    id: string;
+    url: string;
+    npm: string;
   };
-}
+  capabilities: {
+    temperature: boolean;
+    reasoning: boolean;
+    attachment: boolean;
+    toolcall: boolean;
+    input: ProviderModelModalities;
+    output: ProviderModelModalities;
+    interleaved: boolean;
+  };
+  cost: {
+    input: number;
+    output: number;
+    cache: {
+      read: number;
+      write: number;
+    };
+  };
+  limit: {
+    context: number;
+    output: number;
+  };
+  options: Record<string, unknown>;
+  headers: Record<string, string>;
+  status: 'active';
+  variants: Record<string, unknown>;
+};
 
-/**
- * Create the OmniRoute authentication provider
- */
-function createAuthProvider(): AuthProvider {
+export const OmniRouteAuthPlugin: Plugin = async (_input) => {
+  return {
+    config: async (config) => {
+      const providers = config.provider ?? {};
+      const existingProvider = providers[OMNIROUTE_PROVIDER_ID];
+      const baseUrl = getBaseUrl(existingProvider?.options);
+
+      providers[OMNIROUTE_PROVIDER_ID] = {
+        ...existingProvider,
+        name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
+        api: existingProvider?.api ?? 'chat',
+        npm: existingProvider?.npm ?? OMNIROUTE_PROVIDER_NPM,
+        env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
+        options: {
+          ...(existingProvider?.options ?? {}),
+          baseURL: baseUrl,
+        },
+        models:
+          existingProvider?.models && Object.keys(existingProvider.models).length > 0
+            ? existingProvider.models
+            : toProviderModels(OMNIROUTE_DEFAULT_MODELS, baseUrl),
+      };
+
+      config.provider = providers;
+    },
+    auth: createAuthHook(),
+  };
+};
+
+function createAuthHook(): AuthHook {
   return {
     provider: OMNIROUTE_PROVIDER_ID,
     methods: [
       {
-        id: 'api-key',
-        name: 'API Key',
-        description: 'Connect to OmniRoute using API key',
         type: 'api',
-        prompts: [
-          {
-            key: 'endpoint',
-            type: 'text',
-            label: 'OmniRoute Endpoint',
-            message: 'Enter your OmniRoute API endpoint:',
-            placeholder: 'http://localhost:20128/v1',
-            default: 'http://localhost:20128/v1',
-            validate: (value: string) => {
-              if (!value || value.trim() === '') {
-                return 'Endpoint is required';
-              }
-              try {
-                const url = new URL(value);
-                if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-                  return 'Please enter a valid HTTP or HTTPS URL';
-                }
-                return true;
-              } catch {
-                return 'Please enter a valid URL';
-              }
-            },
-          },
-          {
-            key: 'apiKey',
-            type: 'text',
-            label: 'API Key',
-            message: 'Enter your OmniRoute API key:',
-            placeholder: 'sk-...',
-            validate: (value: string) => {
-              if (!value || value.trim() === '') {
-                return 'API key is required';
-              }
-              return true;
-            },
-          },
-        ],
-        authorize: async ({ endpoint, apiKey }: { endpoint: string; apiKey: string }) => {
-          console.log('[OmniRoute] Validating connection...');
-
-          // Add timeout to prevent hanging on slow/unresponsive servers
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-
-          try {
-            // Test the connection by fetching models
-            const modelsUrl = `${endpoint}${OMNIROUTE_ENDPOINTS.MODELS}`;
-            const response = await fetch(modelsUrl, {
-              method: 'GET',
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              signal: controller.signal,
-            });
-
-            if (!response.ok) {
-              // Sanitize error response - only log status, not response body to avoid leaking backend details
-              console.error(
-                `[OmniRoute] Connection failed: ${response.status} ${response.statusText}`,
-              );
-              return {
-                type: 'failed',
-                error: `Connection failed: ${response.statusText}. Please check your endpoint and API key.`,
-              };
-            }
-
-            const data = await response.json();
-            const modelCount = data.data?.length || 0;
-
-            console.log(`[OmniRoute] Connection successful! Found ${modelCount} models.`);
-
-            return {
-              type: 'success',
-              key: apiKey,
-              provider: OMNIROUTE_PROVIDER_ID,
-              // Store the configuration for later use
-              config: {
-                endpoint,
-                apiKey,
-              },
-            };
-          } catch (error) {
-            // Handle abort/timeout errors specially
-            if (error instanceof Error && error.name === 'AbortError') {
-              console.error('[OmniRoute] Connection timed out');
-              return {
-                type: 'failed',
-                error: 'Connection timed out. Please check your endpoint URL and try again.',
-              };
-            }
-            console.error('[OmniRoute] Connection error:', error);
-            return {
-              type: 'failed',
-              error: `Connection error: ${error instanceof Error ? error.message : 'Unknown error'}. Please check your endpoint URL.`,
-            };
-          } finally {
-            // Always clear timeout to prevent memory leaks
-            clearTimeout(timeoutId);
-          }
-        },
+        label: 'API Key',
       },
     ],
-    loader: async ({ getAuth, providerConfig }: LoaderContext): Promise<LoaderResult> => {
-      const auth = await getAuth();
-
-      if (!auth) {
-        throw new Error(
-          "No authentication available. Please run '/connect omniroute' to set up your OmniRoute connection.",
-        );
-      }
-
-      // Get configuration from auth or providerConfig
-      const apiKey = auth.key || auth.config?.apiKey || providerConfig?.apiKey;
-      if (!apiKey) {
-        throw new Error(
-          "No API key available. Please run '/connect omniroute' to set up your OmniRoute connection.",
-        );
-      }
-
-      const config: OmniRouteConfig = {
-        baseUrl: auth.config?.endpoint || providerConfig?.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL,
-        apiKey,
-        refreshOnList: providerConfig?.refreshOnList as boolean | undefined,
-      };
-
-      // Fetch available models (CRITICAL FEATURE)
-      let availableModels: string[] = [];
-      try {
-        // By default, refresh models on each list unless explicitly disabled
-        const forceRefresh = config.refreshOnList !== false;
-        const models = await fetchModels(config, config.apiKey, forceRefresh);
-        availableModels = models.map((m) => m.id);
-        console.log(`[OmniRoute] Available models: ${availableModels.join(', ')}`);
-      } catch (error) {
-        console.warn('[OmniRoute] Failed to fetch models, using defaults:', error);
-        availableModels = OMNIROUTE_DEFAULT_MODELS.map((m) => m.id);
-      }
-
-      return {
-        apiKey: config.apiKey,
-        models: availableModels,
-        fetch: createFetchInterceptor(config),
-      };
-    },
+    loader: loadProviderOptions,
   };
+}
+
+async function loadProviderOptions(
+  getAuth: AuthAccessor,
+  provider: ProviderDefinition,
+): Promise<Record<string, unknown>> {
+  const auth = await getAuth();
+  if (auth.type !== 'api') {
+    throw new Error(
+      "No API key available. Please run '/connect omniroute' to set up your OmniRoute connection.",
+    );
+  }
+
+  const config = createRuntimeConfig(provider, auth.key);
+
+  let models: OmniRouteModel[] = [];
+  try {
+    const forceRefresh = config.refreshOnList !== false;
+    models = await fetchModels(config, config.apiKey, forceRefresh);
+    console.log(`[OmniRoute] Available models: ${models.map((model) => model.id).join(', ')}`);
+  } catch (error) {
+    console.warn('[OmniRoute] Failed to fetch models, using defaults:', error);
+    models = OMNIROUTE_DEFAULT_MODELS;
+  }
+
+  provider.models = toProviderModels(models, config.baseUrl);
+
+  return {
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
+    fetch: createFetchInterceptor(config),
+  };
+}
+
+function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): OmniRouteConfig {
+  const baseUrl = getBaseUrl(provider.options);
+  const modelCacheTtl = getPositiveNumber(provider.options, 'modelCacheTtl');
+  const refreshOnList = getBoolean(provider.options, 'refreshOnList');
+
+  return {
+    baseUrl,
+    apiKey,
+    modelCacheTtl,
+    refreshOnList,
+  };
+}
+
+function getBaseUrl(options?: Record<string, unknown>): string {
+  const rawBaseUrl = options?.baseURL;
+  if (typeof rawBaseUrl !== 'string') {
+    return OMNIROUTE_ENDPOINTS.BASE_URL;
+  }
+
+  const trimmed = rawBaseUrl.trim();
+  if (trimmed === '') {
+    return OMNIROUTE_ENDPOINTS.BASE_URL;
+  }
+
+  return trimmed;
+}
+
+function getPositiveNumber(
+  options: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = options?.[key];
+  if (typeof value === 'number' && value > 0) {
+    return value;
+  }
+  return undefined;
+}
+
+function getBoolean(
+  options: Record<string, unknown> | undefined,
+  key: string,
+): boolean | undefined {
+  const value = options?.[key];
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return undefined;
+}
+
+function toProviderModels(models: OmniRouteModel[], baseUrl: string): Record<string, ProviderModel> {
+  const entries: Array<[string, ProviderModel]> = models.map((model) => [
+    model.id,
+    toProviderModel(model, baseUrl),
+  ]);
+  return Object.fromEntries(entries);
+}
+
+function toProviderModel(model: OmniRouteModel, baseUrl: string): ProviderModel {
+  const supportsVision = model.supportsVision === true;
+  const supportsTools = model.supportsTools !== false;
+
+  return {
+    id: model.id,
+    name: model.name || model.id,
+    providerID: OMNIROUTE_PROVIDER_ID,
+    family: getModelFamily(model.id),
+    release_date: '',
+    api: {
+      id: model.id,
+      url: baseUrl,
+      npm: OMNIROUTE_PROVIDER_NPM,
+    },
+    capabilities: {
+      temperature: true,
+      reasoning: false,
+      attachment: supportsVision,
+      toolcall: supportsTools,
+      input: {
+        text: true,
+        image: supportsVision,
+        audio: false,
+        video: false,
+        pdf: false,
+      },
+      output: {
+        text: true,
+        image: false,
+        audio: false,
+        video: false,
+        pdf: false,
+      },
+      interleaved: false,
+    },
+    cost: {
+      input: model.pricing?.input ?? 0,
+      output: model.pricing?.output ?? 0,
+      cache: {
+        read: 0,
+        write: 0,
+      },
+    },
+    limit: {
+      context: model.contextWindow ?? 4096,
+      output: model.maxTokens ?? 4096,
+    },
+    options: {},
+    headers: {},
+    status: 'active',
+    variants: {},
+  };
+}
+
+function getModelFamily(modelId: string): string {
+  const parts = modelId.split('-');
+  if (parts.length >= 2) {
+    return `${parts[0]}-${parts[1]}`;
+  }
+  return parts[0] || modelId;
 }
 
 /**
