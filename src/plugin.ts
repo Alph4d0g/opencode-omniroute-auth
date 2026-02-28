@@ -127,7 +127,10 @@ async function loadProviderOptions(
     models = OMNIROUTE_DEFAULT_MODELS;
   }
 
-  provider.models = toProviderModels(models, config.baseUrl);
+  replaceProviderModels(provider, toProviderModels(models, config.baseUrl));
+  if (isRecord(provider.models)) {
+    console.log(`[OmniRoute] Provider models hydrated: ${Object.keys(provider.models).length}`);
+  }
 
   return {
     apiKey: config.apiKey,
@@ -183,6 +186,25 @@ function getBoolean(
     return value;
   }
   return undefined;
+}
+
+function replaceProviderModels(
+  provider: ProviderDefinition,
+  models: Record<string, ProviderModel>,
+): void {
+  if (isRecord(provider.models)) {
+    for (const key of Object.keys(provider.models)) {
+      delete provider.models[key];
+    }
+    Object.assign(provider.models, models);
+    return;
+  }
+
+  provider.models = models;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function toProviderModels(models: OmniRouteModel[], baseUrl: string): Record<string, ProviderModel> {
