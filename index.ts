@@ -1,4 +1,6 @@
-export { OmniRouteAuthPlugin } from './src/plugin.js';
+import { OmniRouteAuthPlugin } from './src/plugin.js';
+export { OmniRouteAuthPlugin };
+export default OmniRouteAuthPlugin;
 export type { OmniRouteConfig, OmniRouteModel } from './src/types.js';
 export {
   fetchModels,
