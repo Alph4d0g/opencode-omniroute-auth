@@ -1,5 +1,6 @@
 import type { Plugin, Hooks } from '@opencode-ai/plugin';
 import type {
+  OmniRouteApiMode,
   OmniRouteConfig,
   OmniRouteModel,
   OmniRouteProviderModel,
@@ -26,16 +27,19 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const providers = config.provider ?? {};
       const existingProvider = providers[OMNIROUTE_PROVIDER_ID];
       const baseUrl = getBaseUrl(existingProvider?.options);
+      const apiMode = getApiMode(existingProvider?.options);
+      const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
         ...existingProvider,
         name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
-        api: existingProvider?.api ?? 'chat',
+        api: providerApi,
         npm: existingProvider?.npm ?? OMNIROUTE_PROVIDER_NPM,
         env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
         options: {
           ...(existingProvider?.options ?? {}),
           baseURL: baseUrl,
+          apiMode,
         },
         models:
           existingProvider?.models && Object.keys(existingProvider.models).length > 0
@@ -105,9 +109,45 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   return {
     baseUrl,
     apiKey,
+    apiMode: getApiMode(provider.options),
     modelCacheTtl,
     refreshOnList,
   };
+}
+
+function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteApiMode {
+  if (isApiMode(api)) {
+    if (api !== apiMode) {
+      console.warn(
+        `[OmniRoute] provider.api (${api}) and options.apiMode (${apiMode}) differ; using options.apiMode.`,
+      );
+    }
+    return apiMode;
+  }
+
+  if (typeof api === 'string') {
+    console.warn(`[OmniRoute] Unsupported provider.api value: ${api}. Using ${apiMode}.`);
+  }
+
+  return apiMode;
+}
+
+function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
+  const value = options?.apiMode;
+  if (value === undefined) {
+    return 'chat';
+  }
+
+  if (isApiMode(value)) {
+    return value;
+  }
+
+  console.warn(`[OmniRoute] Unsupported apiMode option: ${String(value)}. Using chat.`);
+  return 'chat';
+}
+
+function isApiMode(value: unknown): value is OmniRouteApiMode {
+  return value === 'chat' || value === 'responses';
 }
 
 function getBaseUrl(options?: Record<string, unknown>): string {

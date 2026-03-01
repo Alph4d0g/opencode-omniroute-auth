@@ -17,6 +17,7 @@
   },
   "include": [
     "index.ts",
+    "runtime.ts",
     "src/**/*",
     "src/types/**/*"
   ],

@@ -13,6 +13,8 @@ export const OMNIROUTE_ENDPOINTS = {
   MODELS: '/models',
   /** Chat completions endpoint */
   CHAT_COMPLETIONS: '/chat/completions',
+  /** Responses endpoint */
+  RESPONSES: '/responses',
 };
 
 /**
