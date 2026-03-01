@@ -1,6 +1,6 @@
 {
   "name": "opencode-omniroute-auth",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "OpenCode authentication plugin for OmniRoute API with /connect command and dynamic model fetching",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime.js",
+      "types": "./dist/runtime.d.ts"
     }
   },
   "files": [
@@ -20,7 +24,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "node -e \"const fs=require('fs');if(fs.existsSync('dist'))fs.rmSync('dist',{recursive:true});\"",
-    "prepublishOnly": "npm run clean && npm run build"
+    "check:exports": "node --input-type=module -e \"import('./dist/index.js').then((m)=>{if(typeof m.default!=='function'){throw new Error('Default export must be a function');}for(const [key,value] of Object.entries(m)){if(typeof value!=='function'){throw new Error('Root export '+key+' must be a function to satisfy plugin loader constraints');}}})\"",
+    "prepublishOnly": "npm run clean && npm run build && npm run check:exports"
   },
   "keywords": [
     "opencode",
@@ -33,6 +38,14 @@
     "models"
   ],
   "author": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Alph4d0g/opencode-omniroute-auth.git"
+  },
+  "homepage": "https://github.com/Alph4d0g/opencode-omniroute-auth#readme",
+  "bugs": {
+    "url": "https://github.com/Alph4d0g/opencode-omniroute-auth/issues"
+  },
   "license": "MIT",
   "peerDependencies": {
     "@opencode-ai/plugin": "*"

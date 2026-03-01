@@ -24,6 +24,8 @@ export interface OmniRouteModelsResponse {
   data: OmniRouteModel[];
 }
 
+export type OmniRouteApiMode = 'chat' | 'responses';
+
 /**
  * OmniRoute configuration
  */
@@ -32,6 +34,8 @@ export interface OmniRouteConfig {
   baseUrl: string;
   /** API key for authentication */
   apiKey: string;
+  /** API mode for OpenAI-compatible provider routing */
+  apiMode: OmniRouteApiMode;
   /** Default models to use if /v1/models fails */
   defaultModels?: OmniRouteModel[];
   /** Model cache TTL in milliseconds (default: 5 minutes) */

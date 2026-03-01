@@ -59,7 +59,7 @@ By default, the plugin refreshes the model list whenever provider options are re
 You can disable refreshes by setting `provider.omniroute.options.refreshOnList` to `false` and clear the cache programmatically:
 
 ```typescript
-import { clearModelCache } from "opencode-omniroute-auth";
+import { clearModelCache } from 'opencode-omniroute-auth/runtime';
 
 clearModelCache();
 ```
@@ -77,6 +77,7 @@ While the plugin works out-of-the-box with `/connect`, you can also configure it
     "omniroute": {
       "options": {
         "baseURL": "http://localhost:20128/v1",
+        "apiMode": "chat",
         "refreshOnList": true,
         "modelCacheTtl": 300000
       }
@@ -93,8 +94,32 @@ Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.
 |--------|------|----------|-------------|
 | `plugin` | string[] | No | npm plugin packages to load (use `opencode-omniroute-auth` when installed from npm) |
 | `provider.omniroute.options.baseURL` | string | No | OmniRoute API base URL (default: `http://localhost:20128/v1`) |
+| `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | No | Provider API mode (default: `chat`) |
 | `provider.omniroute.options.modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
 | `provider.omniroute.options.refreshOnList` | boolean | No | Whether to refresh models when provider options load (default: true) |
+
+### API Mode
+
+The plugin supports two provider API modes:
+
+- `chat` (default) - best compatibility with existing OpenAI-compatible chat workflows.
+- `responses` - enables Responses API mode when your OmniRoute/OpenCode setup supports it.
+
+Example:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "apiMode": "responses"
+      }
+    }
+  }
+}
+```
+
+If an unsupported value is provided, the plugin falls back to `chat`.
 
 ## Dynamic Model Fetching
 
@@ -121,15 +146,18 @@ When the `/v1/models` endpoint is unavailable, the plugin provides these fallbac
 ### Types
 
 ```typescript
-import type { OmniRouteConfig, OmniRouteModel } from "opencode-omniroute-auth";
+import type { OmniRouteApiMode, OmniRouteConfig, OmniRouteModel } from "opencode-omniroute-auth";
 
 interface OmniRouteConfig {
   baseUrl: string;
   apiKey: string;
+  apiMode: OmniRouteApiMode;
   defaultModels?: OmniRouteModel[];
   modelCacheTtl?: number;
   refreshOnList?: boolean;
 }
+
+type OmniRouteApiMode = 'chat' | 'responses';
 
 interface OmniRouteModel {
   id: string;
@@ -150,11 +178,11 @@ interface OmniRouteModel {
 ### Functions
 
 ```typescript
-import { 
+import {
   fetchModels,
   clearModelCache,
-  refreshModels 
-} from "opencode-omniroute-auth";
+  refreshModels,
+} from 'opencode-omniroute-auth/runtime';
 
 // Fetch models manually
 const models = await fetchModels(config, apiKey);
@@ -199,8 +227,19 @@ If models aren't loading:
 1. Check your OmniRoute `/v1/models` endpoint is accessible
 2. Ensure `provider.omniroute.options.baseURL` points to your OmniRoute endpoint
 3. Re-run `/connect omniroute` to refresh your API key
-4. If you use the package programmatically, call `clearModelCache()`
+4. If you use the package programmatically, call `clearModelCache()` from `opencode-omniroute-auth/runtime`
 5. Check the OpenCode logs for error messages
+
+### Plugin Not Loading Outside This Repo
+
+If the plugin loads only through a local shim (for example from `.opencode/plugins` or `.opencode/plugi`) but not from npm in `opencode.json`:
+
+1. Ensure you are using `opencode-omniroute-auth@1.0.1` or newer
+2. Confirm your config includes `"plugin": ["opencode-omniroute-auth"]`
+3. Restart OpenCode so npm plugins are reloaded
+4. Check plugin install cache/logs under `~/.cache/opencode/node_modules`
+
+If needed, clear and reinstall plugin dependencies, then restart OpenCode.
 
 ## License
 
