@@ -1,4 +1,12 @@
-export type { OmniRouteApiMode, OmniRouteConfig, OmniRouteModel } from './src/types.js';
+export type {
+  OmniRouteApiMode,
+  OmniRouteConfig,
+  OmniRouteModel,
+  OmniRouteModelMetadata,
+  OmniRouteModelMetadataBlock,
+  OmniRouteModelMetadataConfig,
+  OmniRouteModelsDevConfig,
+} from './src/types.js';
 export {
   fetchModels,
   clearModelCache,
@@ -13,3 +21,13 @@ export {
   OMNIROUTE_ENDPOINTS,
   REQUEST_TIMEOUT,
 } from './src/constants.js';
+
+export {
+  clearModelsDevCache,
+} from './src/models-dev.js';
+export {
+  clearComboCache,
+  fetchComboData,
+  resolveUnderlyingModels,
+  calculateModelCapabilities,
+} from './src/omniroute-combos.js';
