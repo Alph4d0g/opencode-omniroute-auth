@@ -10,6 +10,14 @@
 - ✅ **Provider Auto-Registration** - Registers an `omniroute` provider via plugin hooks
 - ✅ **Model Caching** - Intelligent caching with TTL for better performance
 - ✅ **Fallback Models** - Default models when API is unavailable
+- ✅ **Combo Model Capability Enrichment** - Automatically calculates lowest common capabilities for OmniRoute combo models
+
+- ✅ **Simple `/connect` Command** - No manual configuration needed
+- ✅ **API Key Authentication** - Simple and secure API key-based auth
+- ✅ **Dynamic Model Fetching** - Automatically fetches available models from `/v1/models` endpoint
+- ✅ **Provider Auto-Registration** - Registers an `omniroute` provider via plugin hooks
+- ✅ **Model Caching** - Intelligent caching with TTL for better performance
+- ✅ **Fallback Models** - Default models when API is unavailable
 
 ## Installation
 
@@ -97,6 +105,105 @@ Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.
 | `provider.omniroute.options.apiMode` | `'chat' \| 'responses'` | No | Provider API mode (default: `chat`) |
 | `provider.omniroute.options.modelCacheTtl` | number | No | Model cache TTL in milliseconds (default: 5 minutes) |
 | `provider.omniroute.options.refreshOnList` | boolean | No | Whether to refresh models when provider options load (default: true) |
+| `provider.omniroute.options.modelsDev` | object | No | Enrich model metadata from models.dev on refresh (default: enabled) |
+| `provider.omniroute.options.modelMetadata` | object \| array | No | Override/add metadata for custom/virtual models (works well in `opencode.js`) |
+
+### Model Metadata Enrichment (models.dev)
+
+OmniRoute may not expose model context/output limits in `/v1/models`. When enabled, this plugin attempts to
+enrich `contextWindow` and `maxTokens` by matching your OmniRoute models against `models.dev`.
+
+You can disable enrichment or override defaults:
+
+```js
+{
+  provider: {
+    omniroute: {
+      options: {
+        modelsDev: {
+          enabled: true,
+          url: 'https://models.dev/api.json',
+          timeoutMs: 1000,
+          cacheTtl: 86400000,
+          providerAliases: {
+            cx: 'openai',
+          },
+        },
+      },
+    },
+  },
+}
+```
+
+### Custom / Virtual Model Overrides (config blocks)
+
+For custom/virtual models (or when matching is imperfect), you can provide metadata overrides.
+
+In `opencode.js` you can use RegExp matchers:
+
+```js
+{
+  provider: {
+    omniroute: {
+      options: {
+        modelMetadata: [
+          { match: /gpt-5\.3-codex$/i, contextWindow: 200000, maxTokens: 8192 },
+          { match: 'omniroute/virtual/my-custom-model', addIfMissing: true, contextWindow: 50000 },
+        ],
+      },
+    },
+  },
+}
+```
+
+In JSON configs, use an object keyed by model id:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "modelMetadata": {
+          "virtual/my-custom-model": { "contextWindow": 50000, "maxTokens": 2048 }
+        }
+      }
+    }
+  }
+}
+```
+
+### Combo Model Capability Enrichment
+
+OmniRoute supports "combo models" - virtual models that route to multiple underlying models with fallback strategies. This plugin automatically detects combo models and calculates their capabilities using a **lowest common denominator** approach:
+
+- **Context Window**: Minimum of all underlying models
+- **Max Tokens**: Minimum of all underlying models  
+- **Vision Support**: Only if ALL underlying models support vision
+- **Tool Support**: Only if ALL underlying models support tools
+
+This ensures safe operation by never exceeding the capabilities of any single model in the combo.
+
+**How it works:**
+1. The plugin fetches combo definitions from OmniRoute's `/api/combos` endpoint
+2. For each combo model, it resolves the underlying models
+3. It looks up each underlying model's capabilities from `models.dev`
+4. It calculates the lowest common capabilities across all resolvable models
+5. These calculated capabilities are applied to the combo model
+
+**Example:**
+The "Designer" combo might route to:
+- `kmc/kimi-k2.5` (context: 256000, tools: yes)
+- `cx/gpt-5.1-codex-mini` (context: 204800, tools: yes)
+- `gemini/models/gemini-3-flash-preview` (context: 1048576, tools: yes)
+
+Calculated capabilities:
+- Context: **204800** (minimum)
+- Max Tokens: **32768** (minimum)
+- Tools: **true** (all support tools)
+
+Note: Some underlying models may not be found in `models.dev` (e.g., custom models). In such cases, they are excluded from capability calculation, and a warning is logged.
+
+### API Mode
 
 ### API Mode
 
@@ -146,7 +253,13 @@ When the `/v1/models` endpoint is unavailable, the plugin provides these fallbac
 ### Types
 
 ```typescript
-import type { OmniRouteApiMode, OmniRouteConfig, OmniRouteModel } from "opencode-omniroute-auth";
+import type {
+  OmniRouteApiMode,
+  OmniRouteConfig,
+  OmniRouteModel,
+  OmniRouteModelMetadataConfig,
+  OmniRouteModelsDevConfig,
+} from "opencode-omniroute-auth";
 
 interface OmniRouteConfig {
   baseUrl: string;
@@ -155,6 +268,8 @@ interface OmniRouteConfig {
   defaultModels?: OmniRouteModel[];
   modelCacheTtl?: number;
   refreshOnList?: boolean;
+  modelsDev?: OmniRouteModelsDevConfig;
+  modelMetadata?: OmniRouteModelMetadataConfig;
 }
 
 type OmniRouteApiMode = 'chat' | 'responses';
@@ -178,6 +293,31 @@ interface OmniRouteModel {
 ### Functions
 
 ```typescript
+import {
+  fetchModels,
+  clearModelCache,
+  refreshModels,
+  // New: Combo model utilities
+  clearComboCache,
+  fetchComboData,
+  resolveUnderlyingModels,
+  calculateModelCapabilities,
+} from 'opencode-omniroute-auth/runtime';
+
+// Fetch models manually (with automatic enrichment)
+const models = await fetchModels(config, apiKey);
+
+// Clear model cache (also clears combo cache)
+clearModelCache();
+
+// Force refresh models
+const freshModels = await refreshModels(config, apiKey);
+
+// Combo model utilities
+const combos = await fetchComboData(config);
+const underlyingModels = await resolveUnderlyingModels('Designer', config);
+const capabilities = await calculateModelCapabilities(model, config, modelsDevIndex);
+```
 import {
   fetchModels,
   clearModelCache,
