@@ -190,9 +190,15 @@ export function buildModelsDevIndex(data: ModelsDevData | null): ModelsDevIndex 
 export async function getModelsDevIndex(
   config?: OmniRouteConfig,
 ): Promise<ModelsDevIndex | null> {
+  // Check if models.dev enrichment is disabled
+  if (config?.modelsDev?.enabled === false) {
+    return null;
+  }
+
   const data = await fetchModelsDevData(config);
   return buildModelsDevIndex(data);
 }
+
 
 /**
  * Clear the models.dev cache
@@ -249,10 +255,7 @@ export function modelsDevToMetadata(model: ModelsDevModel): OmniRouteModelMetada
     metadata.supportsTools = true;
   }
 
-  // Temperature support
-  if (model.temperature === true) {
-    // This is expected, no specific field for this
-  }
+
 
   // Pricing
   if (model.cost?.input !== undefined || model.cost?.output !== undefined) {
