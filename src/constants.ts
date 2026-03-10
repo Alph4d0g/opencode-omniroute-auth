@@ -72,3 +72,10 @@ export const MODEL_CACHE_TTL = 5 * 60 * 1000;
  * Request timeout in milliseconds (30 seconds)
  */
 export const REQUEST_TIMEOUT = 30000;
+
+/**
+ * models.dev enrichment defaults
+ */
+export const MODELS_DEV_DEFAULT_URL = 'https://models.dev/api.json';
+export const MODELS_DEV_CACHE_TTL = 24 * 60 * 60 * 1000;
+export const MODELS_DEV_TIMEOUT_MS = 1000;

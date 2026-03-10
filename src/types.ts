@@ -16,6 +16,52 @@ export interface OmniRouteModel {
   };
 }
 
+export interface OmniRouteModelMetadata {
+  name?: string;
+  description?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  supportsStreaming?: boolean;
+  supportsVision?: boolean;
+  supportsTools?: boolean;
+  pricing?: {
+    input?: number;
+    output?: number;
+  };
+}
+
+export interface OmniRouteModelMetadataBlock extends OmniRouteModelMetadata {
+  /**
+   * Apply this metadata to any model whose id matches.
+   * In `opencode.js` this can be a RegExp; in JSON configs, use a string.
+   */
+  match: string | RegExp;
+  /**
+   * If `true` and `match` is a string, create the model when it does not exist in `/v1/models`.
+   */
+  addIfMissing?: boolean;
+}
+
+export type OmniRouteModelMetadataConfig =
+  | Record<string, OmniRouteModelMetadata>
+  | OmniRouteModelMetadataBlock[];
+
+export interface OmniRouteModelsDevConfig {
+  /** Enable/disable models.dev enrichment (default: true) */
+  enabled?: boolean;
+  /** URL to models.dev API payload (default: https://models.dev/api.json) */
+  url?: string;
+  /** Cache TTL in milliseconds (default: 24 hours) */
+  cacheTtl?: number;
+  /** Fetch timeout in milliseconds (default: 1000ms) */
+  timeoutMs?: number;
+  /**
+   * Optional alias mapping from OmniRoute provider keys (e.g. `cx`) to models.dev providers (e.g. `openai`).
+   * These merge with built-in defaults.
+   */
+  providerAliases?: Record<string, string>;
+}
+
 /**
  * OmniRoute API response for /v1/models
  */
@@ -42,6 +88,10 @@ export interface OmniRouteConfig {
   modelCacheTtl?: number;
   /** Whether to refresh models on each model listing (default: true) */
   refreshOnList?: boolean;
+  /** Optional models.dev enrichment configuration */
+  modelsDev?: OmniRouteModelsDevConfig;
+  /** Optional metadata overrides/additions for custom/virtual models */
+  modelMetadata?: OmniRouteModelMetadataConfig;
 }
 
 export interface OmniRouteProviderModelModalities {
