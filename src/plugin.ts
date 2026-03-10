@@ -3,6 +3,8 @@ import type {
   OmniRouteApiMode,
   OmniRouteConfig,
   OmniRouteModel,
+  OmniRouteModelMetadataConfig,
+  OmniRouteModelsDevConfig,
   OmniRouteProviderModel,
 } from './types.js';
 import {
@@ -105,6 +107,8 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
   const baseUrl = getBaseUrl(provider.options);
   const modelCacheTtl = getPositiveNumber(provider.options, 'modelCacheTtl');
   const refreshOnList = getBoolean(provider.options, 'refreshOnList');
+  const modelsDev = getModelsDevConfig(provider.options);
+  const modelMetadata = getModelMetadataConfig(provider.options);
 
   return {
     baseUrl,
@@ -112,6 +116,8 @@ function createRuntimeConfig(provider: ProviderDefinition, apiKey: string): Omni
     apiMode: getApiMode(provider.options),
     modelCacheTtl,
     refreshOnList,
+    modelsDev,
+    modelMetadata,
   };
 }
 
@@ -195,6 +201,90 @@ function getBoolean(
     return value;
   }
   return undefined;
+}
+
+function getModelsDevConfig(options: Record<string, unknown> | undefined): OmniRouteModelsDevConfig | undefined {
+  const raw = options?.modelsDev;
+  if (!isRecord(raw)) return undefined;
+
+  const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : undefined;
+  const url = typeof raw.url === 'string' && raw.url.trim() !== '' ? raw.url.trim() : undefined;
+  const cacheTtl = getPositiveNumber(raw, 'cacheTtl');
+  const timeoutMs = getPositiveNumber(raw, 'timeoutMs');
+  const providerAliases = getStringRecord(raw.providerAliases);
+
+  if (
+    enabled === undefined &&
+    url === undefined &&
+    cacheTtl === undefined &&
+    timeoutMs === undefined &&
+    providerAliases === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(url !== undefined ? { url } : {}),
+    ...(cacheTtl !== undefined ? { cacheTtl } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(providerAliases !== undefined ? { providerAliases } : {}),
+  };
+}
+
+function getModelMetadataConfig(
+  options: Record<string, unknown> | undefined,
+): OmniRouteModelMetadataConfig | undefined {
+  const raw = options?.modelMetadata;
+  if (!raw) return undefined;
+
+  if (Array.isArray(raw)) {
+    const filtered = raw.filter(
+      (item) =>
+        isRecord(item) && (typeof item.match === 'string' || coerceRegExp(item.match) !== null),
+    );
+    return filtered.length > 0 ? (filtered as unknown as OmniRouteModelMetadataConfig) : undefined;
+  }
+
+  if (isRecord(raw)) {
+    const hasAny = Object.values(raw).some((value) => isRecord(value));
+    return hasAny ? (raw as unknown as OmniRouteModelMetadataConfig) : undefined;
+  }
+
+  return undefined;
+}
+
+function getStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const out: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    out[key] = trimmed;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isRegExp(value: unknown): value is RegExp {
+  return Object.prototype.toString.call(value) === '[object RegExp]';
+}
+
+function coerceRegExp(value: unknown): RegExp | null {
+  if (isRegExp(value)) return value;
+  if (!isRecord(value)) return null;
+
+  const source = value.source;
+  const flags = value.flags;
+  if (typeof source !== 'string' || typeof flags !== 'string') return null;
+
+  try {
+    return new RegExp(source, flags);
+  } catch {
+    return null;
+  }
 }
 
 function replaceProviderModels(

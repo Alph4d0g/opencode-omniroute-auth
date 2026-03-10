@@ -1,10 +1,13 @@
-import type { OmniRouteConfig, OmniRouteModel, OmniRouteModelsResponse } from './types.js';
+import type { OmniRouteConfig, OmniRouteModel, OmniRouteModelMetadata, OmniRouteModelsResponse } from './types.js';
 import {
   OMNIROUTE_DEFAULT_MODELS,
   OMNIROUTE_ENDPOINTS,
   MODEL_CACHE_TTL,
   REQUEST_TIMEOUT,
 } from './constants.js';
+import { getModelsDevIndex, normalizeModelKey } from './models-dev.js';
+import type { ModelsDevIndex } from './models-dev.js';
+import { enrichComboModels, clearComboCache } from './omniroute-combos.js';
 
 /**
  * Model cache entry
@@ -97,7 +100,7 @@ export async function fetchModels(
     const data = rawData as OmniRouteModelsResponse;
 
     // Transform and validate models - filter out invalid entries
-    const models = data.data
+    const rawModels = data.data
       .filter(
         (model): model is OmniRouteModel =>
           model !== null && model !== undefined && typeof model.id === 'string',
@@ -108,12 +111,16 @@ export async function fetchModels(
         id: model.id,
         name: model.name || model.id,
         description: model.description || `OmniRoute model: ${model.id}`,
-        contextWindow: model.contextWindow ?? 4096,
-        maxTokens: model.maxTokens ?? 4096,
-        supportsStreaming: model.supportsStreaming ?? true,
-        supportsVision: model.supportsVision ?? false,
-        supportsTools: model.supportsTools ?? true,
+        // Keep undefined for enrichment to work properly
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        supportsStreaming: model.supportsStreaming,
+        supportsVision: model.supportsVision,
+        supportsTools: model.supportsTools,
       }));
+
+    // Enrich with models.dev and combo capabilities
+    const models = await enrichModelMetadata(rawModels, config);
 
     // Update cache
     modelCache.set(cacheKey, {
@@ -156,6 +163,8 @@ export function clearModelCache(config?: OmniRouteConfig, apiKey?: string): void
     modelCache.clear();
     console.log('[OmniRoute] All model caches cleared');
   }
+  // Also clear combo cache
+  clearComboCache();
 }
 
 /**
@@ -195,4 +204,141 @@ export async function refreshModels(
 ): Promise<OmniRouteModel[]> {
   clearModelCache();
   return fetchModels(config, apiKey, true);
+}
+
+/**
+ * Enrich model metadata with models.dev data and combo capabilities
+ */
+async function enrichModelMetadata(
+  models: OmniRouteModel[],
+  config: OmniRouteConfig,
+): Promise<OmniRouteModel[]> {
+  const modelsDevIndex = await getModelsDevIndex(config);
+
+  // Apply models.dev metadata enrichment
+  const withModelsDev =
+    modelsDevIndex === null
+      ? models
+      : models.map((model) => applyModelsDevMetadata(model, config, modelsDevIndex));
+
+  // Enrich combo models with lowest common capabilities
+  const withComboCapabilities = await enrichComboModels(withModelsDev, config, modelsDevIndex);
+
+  return withComboCapabilities;
+}
+
+/**
+ * Apply models.dev metadata to a model
+ */
+function applyModelsDevMetadata(
+  model: OmniRouteModel,
+  config: OmniRouteConfig,
+  index: ModelsDevIndex,
+): OmniRouteModel {
+  const { providerKey, modelKey } = splitOmniRouteModelForLookup(model.id);
+  const providerAlias = resolveProviderAlias(providerKey, config);
+  const lookupKey = modelKey.toLowerCase();
+  const normalizedKey = normalizeModelKey(modelKey);
+
+  // Try provider-specific exact match first
+  const providerExact = providerAlias
+    ? index.exactByProvider.get(providerAlias)?.get(lookupKey)
+    : undefined;
+
+  // Try provider-specific normalized match
+  const providerNorm = providerAlias
+    ? index.normalizedByProvider.get(providerAlias)?.get(normalizedKey)
+    : undefined;
+
+  // Try global exact match (only if single match to avoid ambiguity)
+  const globalExactList = index.exactGlobal.get(lookupKey);
+  const globalExact = globalExactList?.length === 1 ? globalExactList[0] : undefined;
+
+  // Try global normalized match (only if single match to avoid ambiguity)
+  const globalNormList = index.normalizedGlobal.get(normalizedKey);
+  const globalNorm = globalNormList?.length === 1 ? globalNormList[0] : undefined;
+
+  // Pick the best match (provider-specific preferred over global)
+  const best = providerExact ?? providerNorm ?? globalExact ?? globalNorm;
+
+  if (!best) return model;
+
+  // Merge capabilities (only fill in missing values)
+  return {
+    ...model,
+    ...(model.contextWindow === undefined && best.limit?.context !== undefined
+      ? { contextWindow: best.limit.context }
+      : {}),
+    ...(model.maxTokens === undefined && best.limit?.output !== undefined
+      ? { maxTokens: best.limit.output }
+      : {}),
+    ...(model.supportsVision === undefined && best.modalities?.input?.includes('image')
+      ? { supportsVision: true }
+      : {}),
+    ...(model.supportsTools === undefined && best.tool_call === true
+      ? { supportsTools: true }
+      : {}),
+    ...(model.supportsStreaming === undefined
+      ? { supportsStreaming: true } // Assume streaming is supported by default
+      : {}),
+  };
+}
+
+/**
+ * Split model ID for models.dev lookup
+ */
+function splitOmniRouteModelForLookup(
+  modelId: string,
+): { providerKey: string | null; modelKey: string } {
+  const trimmed = modelId.trim();
+
+  // Remove omniroute prefix if present
+  const withoutPrefix = trimmed.replace(/^omniroute\//, '');
+
+  // Split by /
+  const parts = withoutPrefix.split('/').filter((p) => p.trim() !== '');
+
+  if (parts.length >= 2) {
+    return {
+      providerKey: parts[0] ?? null,
+      modelKey: parts.slice(1).join('/'),
+    };
+  }
+
+  return { providerKey: null, modelKey: withoutPrefix };
+}
+
+/**
+ * Resolve provider alias using config
+ */
+function resolveProviderAlias(
+  providerKey: string | null,
+  config: OmniRouteConfig,
+): string | null {
+  if (!providerKey) return null;
+
+  const lower = providerKey.toLowerCase();
+
+  // Default aliases
+  const aliases: Record<string, string> = {
+    oai: 'openai',
+    openai: 'openai',
+    cx: 'openai',
+    codex: 'openai',
+    anthropic: 'anthropic',
+    claude: 'anthropic',
+    gemini: 'google',
+    google: 'google',
+    deepseek: 'deepseek',
+    mistral: 'mistral',
+    xai: 'xai',
+    groq: 'groq',
+    together: 'together',
+    openrouter: 'openrouter',
+    perplexity: 'perplexity',
+    cohere: 'cohere',
+    ...config.modelsDev?.providerAliases,
+  };
+
+  return aliases[lower] ?? lower;
 }
