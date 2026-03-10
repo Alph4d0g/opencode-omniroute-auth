@@ -312,7 +312,7 @@ export function isComboModel(model: OmniRouteModel): boolean {
   }
 
   // Fallback: check if it's in our combo cache
-  if (comboCache?.combos.has(model.id)) {
+  if (comboCache?.combos?.has(model.id)) {
     return true;
   }
 
