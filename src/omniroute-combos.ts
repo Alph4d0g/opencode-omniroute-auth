@@ -139,7 +139,7 @@ export async function resolveUnderlyingModels(
   const combo = combos.get(modelId);
   if (combo) {
     console.log(`[OmniRoute] Resolved combo "${modelId}" to ${combo.models.length} underlying models`);
-    return combo.models;
+    return combo.models.map((m: any) => typeof m === 'string' ? m : (m.model || m.id));
   }
 
   // Not a combo, return as-is
