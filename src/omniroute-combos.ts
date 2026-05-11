@@ -14,7 +14,7 @@ import { REQUEST_TIMEOUT } from './constants.js';
 export interface OmniRouteCombo {
   id: string;
   name: string;
-  models: string[];
+  models: Array<string | { model?: string; id?: string }>;
   strategy: 'priority' | 'weighted' | 'round-robin' | 'random' | 'least-used' | 'cost-optimized';
   config: {
     maxRetries?: number;
