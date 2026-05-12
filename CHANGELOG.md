@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.1] - 2026-05-12
+
+### Fixed
+
+- Fixed combo model processing when the API returns model entries as objects instead of strings in the `models` array. (@hjasgr)
+- Hardened `resolveUnderlyingModels` against null/undefined entries and missing properties with runtime type narrowing.
+
+### Changed
+
+- Updated `OmniRouteCombo.models` type to accept objects from the API.
+
+## [1.1.0] - 2026-03-10
+
+### Added
+
+- Added models.dev capability enrichment for OmniRoute models via `provider.omniroute.options.modelsDev`.
+- Added combo model support with automatic lowest-common-denominator capability calculation from `/api/combos`.
+- Added `modelMetadata` configuration option for custom/virtual model overrides via `provider.omniroute.options.modelMetadata`.
+- Added new runtime exports: `clearModelsDevCache`, `clearComboCache`, `fetchComboData`, `resolveUnderlyingModels`, `calculateModelCapabilities`.
+- Added provider alias mapping (e.g., `cx` → `openai`, `gemini` → `google`) for models.dev lookups.
+
+### Changed
+
+- Updated `fetchModels` to orchestrate enrichment pipeline (models.dev → combo capabilities).
+- Updated `clearModelCache` to also clear the combo cache.
+- Updated README with combo model documentation and new runtime API references.
+
 ## [1.0.3] - 2026-03-01
 
 ### Added
