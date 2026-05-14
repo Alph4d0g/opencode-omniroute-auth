@@ -286,6 +286,93 @@ test('gemini schema sanitization applies to responses endpoint request objects',
   assert.equal(forwardedBody.tools[0].input_schema.properties.query.items.additionalProperties, undefined);
 });
 
+test('provider hook fetches models when auth is available via context', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'live-model', name: 'Live Model' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'live-key' } },
+  );
+
+  assert.ok(result['live-model']);
+  assert.equal(result['live-model'].name, 'Live Model');
+  assert.equal(result['live-model'].providerID, 'omniroute');
+});
+
+test('provider hook falls back to defaults when no auth available', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async () => {
+    throw new Error('should not fetch');
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    {}, // no auth
+  );
+
+  // Should return default models (gpt-4o, gpt-4o-mini, etc.)
+  assert.ok(result['gpt-4o']);
+  assert.equal(result['gpt-4o'].providerID, 'omniroute');
+});
+
+test('provider hook returns defaults when fetch fails (fetchModels handles errors)', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async () => {
+    throw new Error('API unavailable');
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: { 'existing-model': { id: 'existing-model', name: 'Existing', providerID: 'omniroute' } },
+    },
+    { auth: { type: 'api', key: 'bad-key' } },
+  );
+
+  // fetchModels catches errors and returns defaults, so we get default models
+  assert.ok(result['gpt-4o']);
+  assert.equal(result['gpt-4o'].providerID, 'omniroute');
+  // Existing provider models are NOT returned because fetchModels handles the error internally
+  assert.equal(result['existing-model'], undefined);
+});
+
 test('config hook eagerly fetches models when auth is available', async () => {
   const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
   try {
