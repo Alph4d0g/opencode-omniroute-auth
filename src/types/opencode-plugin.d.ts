@@ -101,6 +101,8 @@ declare module '@opencode-ai/plugin' {
   export interface ModelV2 {
     id: string;
     providerID: string;
+    family: string;
+    release_date: string;
     api: { id: string; url: string; npm: string };
     name: string;
     capabilities: {
@@ -110,12 +112,14 @@ declare module '@opencode-ai/plugin' {
       toolcall: boolean;
       input: { text: boolean; audio: boolean; image: boolean; video: boolean; pdf: boolean };
       output: { text: boolean; audio: boolean; image: boolean; video: boolean; pdf: boolean };
+      interleaved: boolean;
     };
     cost: { input: number; output: number; cache: { read: number; write: number } };
     limit: { context: number; output: number };
-    status: 'alpha' | 'beta' | 'deprecated' | 'active';
+    status: 'active';
     options: Record<string, unknown>;
     headers: Record<string, string>;
+    variants: Record<string, unknown>;
   }
 
   export interface ProviderV2 {
