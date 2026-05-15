@@ -8,6 +8,7 @@ import {
 import { getModelsDevIndex, normalizeModelKey } from './models-dev.js';
 import type { ModelsDevIndex } from './models-dev.js';
 import { enrichComboModels, clearComboCache } from './omniroute-combos.js';
+import { warn, debug } from './logger.js';
 
 /**
  * Model cache entry
@@ -53,18 +54,18 @@ export async function fetchModels(
 
     const cached = modelCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < cacheTtl) {
-      console.log('[OmniRoute] Using cached models');
+      debug('Using cached models');
       return cached.models;
     }
   } else {
-    console.log('[OmniRoute] Forcing model refresh');
+    debug('Forcing model refresh');
   }
 
   // Use default baseUrl if not provided to prevent undefined URL
   const baseUrl = config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL;
   const modelsUrl = `${baseUrl}${OMNIROUTE_ENDPOINTS.MODELS}`;
 
-  console.log(`[OmniRoute] Fetching models from ${modelsUrl}`);
+  debug(`Fetching models from ${modelsUrl}`);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
@@ -82,9 +83,7 @@ export async function fetchModels(
 
     if (!response.ok) {
       // Sanitize error - only log status, not response body
-      console.error(
-        `[OmniRoute] Failed to fetch models: ${response.status} ${response.statusText}`,
-      );
+      warn(`Failed to fetch models: ${response.status} ${response.statusText}`);
       throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
     }
 
@@ -93,7 +92,7 @@ export async function fetchModels(
 
     // Runtime validation to ensure API returns expected structure
     if (!rawData || typeof rawData !== 'object' || !Array.isArray(rawData.data)) {
-      console.error('[OmniRoute] Invalid models response structure:', rawData);
+      warn(`Invalid models response structure: ${JSON.stringify(rawData)}`);
       throw new Error('Invalid models response structure: expected { data: Array }');
     }
 
@@ -128,20 +127,20 @@ export async function fetchModels(
       timestamp: Date.now(),
     });
 
-    console.log(`[OmniRoute] Successfully fetched ${models.length} models`);
+    debug(`Successfully fetched ${models.length} models`);
     return models;
   } catch (error) {
-    console.error('[OmniRoute] Error fetching models:', error);
+    warn(`Error fetching models: ${error}`);
 
     // Return cached models if available (even if expired)
     const cached = modelCache.get(cacheKey);
     if (cached) {
-      console.log('[OmniRoute] Returning expired cached models as fallback');
+      debug('Returning expired cached models as fallback');
       return cached.models;
     }
 
     // Return default models as last resort
-    console.log('[OmniRoute] Returning default models as fallback');
+    debug('Returning default models as fallback');
     return config.defaultModels || OMNIROUTE_DEFAULT_MODELS;
   } finally {
     // Always clear the timeout to prevent memory leaks
@@ -158,10 +157,10 @@ export function clearModelCache(config?: OmniRouteConfig, apiKey?: string): void
   if (config && apiKey) {
     const cacheKey = getCacheKey(config, apiKey);
     modelCache.delete(cacheKey);
-    console.log('[OmniRoute] Model cache cleared for provided configuration');
+    debug('Model cache cleared for provided configuration');
   } else {
     modelCache.clear();
-    console.log('[OmniRoute] All model caches cleared');
+    debug('All model caches cleared');
   }
   // Also clear combo cache
   clearComboCache();
