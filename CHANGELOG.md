@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.3] - 2026-05-15
+
+### Added
+
+- Added proper logger module (`src/logger.ts`) that writes to OpenCode's log file instead of the console.
+  - `warn()` always writes; `debug()` only writes when `OMNIROUTE_DEBUG=1`.
+  - Finds the most recent `.log` file in `~/.local/share/opencode/log/` by `mtime`.
+  - Re-scans for new log files when the cached file is deleted (log rotation support).
+  - Silently fails on all I/O errors — never crashes the plugin.
+- Added 13 unit tests for the logger module (`test/logger.test.mjs`).
+
+### Changed
+
+- Replaced all 46 `console.log`/`console.warn`/`console.error` calls across 4 source files with the new logger:
+  - `src/plugin.ts` (13 calls)
+  - `src/models.ts` (11 calls)
+  - `src/models-dev.ts` (7 calls)
+  - `src/omniroute-combos.ts` (15 calls)
+- Log format now matches OpenCode's native format: `WARN  2026-05-14T12:34:56.789Z +0ms service=omniroute <message>`.
+
+### Fixed
+
+- Fixed 2 pre-existing failing model cache tests that were incorrectly counting all `fetch` calls instead of only `/v1/models` calls.
+
 ## [1.1.2] - 2026-05-13
 
 ### Fixed
