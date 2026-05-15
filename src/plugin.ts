@@ -81,12 +81,8 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           return toProviderModels(models, baseUrl);
         }
 
-        // No auth yet (user hasn't /connect'd): reuse whatever the config hook
-        // or user config seeded, or fall back to built-in defaults.
-        if (provider.models && Object.keys(provider.models).length > 0) {
-          return provider.models;
-        }
-
+        // No auth yet (user hasn't /connect'd): return built-in defaults.
+        // This ensures models have the correct metadata (like api.url) to work with the plugin.
         return toProviderModels(OMNIROUTE_DEFAULT_MODELS, baseUrl);
       },
     },
