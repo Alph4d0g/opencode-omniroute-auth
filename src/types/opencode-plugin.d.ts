@@ -139,6 +139,7 @@ declare module '@opencode-ai/plugin' {
       ctx: ProviderHookContext,
     ) => Promise<Record<string, ModelV2>>;
   }
+
   export interface Hooks {
     config?: (input: Config) => Promise<void>;
     auth?: AuthHook;
