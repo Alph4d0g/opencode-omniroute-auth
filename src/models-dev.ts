@@ -4,6 +4,7 @@ import {
   MODELS_DEV_CACHE_TTL,
   MODELS_DEV_TIMEOUT_MS,
 } from './constants.js';
+import { warn, debug } from './logger.js';
 
 /**
  * models.dev model information
@@ -90,11 +91,11 @@ export async function fetchModelsDevData(
 
   // Check cache first
   if (modelsDevCache && Date.now() - modelsDevCache.timestamp < cacheTtl) {
-    console.log('[OmniRoute] Using cached models.dev data');
+    debug('Using cached models.dev data');
     return modelsDevCache.data;
   }
 
-  console.log(`[OmniRoute] Fetching models.dev data from ${url}`);
+  debug(`Fetching models.dev data from ${url}`);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -109,7 +110,7 @@ export async function fetchModelsDevData(
     });
 
     if (!response.ok) {
-      console.warn(`[OmniRoute] Failed to fetch models.dev data: ${response.status}`);
+      warn(`Failed to fetch models.dev data: ${response.status}`);
       return null;
     }
 
@@ -117,7 +118,7 @@ export async function fetchModelsDevData(
 
     // Validate structure
     if (!data || typeof data !== 'object') {
-      console.warn('[OmniRoute] Invalid models.dev data structure');
+      warn('Invalid models.dev data structure');
       return null;
     }
 
@@ -127,10 +128,10 @@ export async function fetchModelsDevData(
       timestamp: Date.now(),
     };
 
-    console.log(`[OmniRoute] Successfully fetched models.dev data`);
+    debug('Successfully fetched models.dev data');
     return data;
   } catch (error) {
-    console.warn('[OmniRoute] Error fetching models.dev data:', error);
+    warn(`Error fetching models.dev data: ${error}`);
     return null;
   } finally {
     clearTimeout(timeoutId);
@@ -205,7 +206,7 @@ export async function getModelsDevIndex(
  */
 export function clearModelsDevCache(): void {
   modelsDevCache = null;
-  console.log('[OmniRoute] models.dev cache cleared');
+  debug('models.dev cache cleared');
 }
 
 /**
