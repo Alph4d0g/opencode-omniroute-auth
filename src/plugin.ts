@@ -16,6 +16,7 @@ import {
   OMNIROUTE_ENDPOINTS,
 } from './constants.js';
 import { fetchModels } from './models.js';
+import { warn, debug } from './logger.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
@@ -43,7 +44,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           models = await fetchModels(runtimeConfig, auth.key, false);
         }
       } catch (error) {
-        console.warn('[OmniRoute] Eager model fetch failed, using defaults:', error);
+        warn(`Eager model fetch failed, using defaults: ${error}`);
       }
 
       providers[OMNIROUTE_PROVIDER_ID] = {
@@ -99,15 +100,15 @@ async function loadProviderOptions(
   try {
     const forceRefresh = config.refreshOnList !== false;
     models = await fetchModels(config, config.apiKey, forceRefresh);
-    console.log(`[OmniRoute] Available models: ${models.map((model) => model.id).join(', ')}`);
+    debug(`Available models: ${models.map((model) => model.id).join(', ')}`);
   } catch (error) {
-    console.warn('[OmniRoute] Failed to fetch models, using defaults:', error);
+    warn(`Failed to fetch models, using defaults: ${error}`);
     models = OMNIROUTE_DEFAULT_MODELS;
   }
 
   replaceProviderModels(provider, toProviderModels(models, config.baseUrl));
   if (isRecord(provider.models)) {
-    console.log(`[OmniRoute] Provider models hydrated: ${Object.keys(provider.models).length}`);
+    debug(`Provider models hydrated: ${Object.keys(provider.models).length}`);
   }
 
   return {
@@ -154,7 +155,7 @@ async function readAuthFromStore(
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
       return null;
     }
-    console.warn('[OmniRoute] Unexpected error reading auth store:', error);
+    warn(`Unexpected error reading auth store: ${error}`);
     return null;
   }
 }
@@ -162,15 +163,13 @@ async function readAuthFromStore(
 function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteApiMode {
   if (isApiMode(api)) {
     if (api !== apiMode) {
-      console.warn(
-        `[OmniRoute] provider.api (${api}) and options.apiMode (${apiMode}) differ; using options.apiMode.`,
-      );
+      warn('provider.api and options.apiMode differ; using options.apiMode');
     }
     return apiMode;
   }
 
   if (typeof api === 'string') {
-    console.warn(`[OmniRoute] Unsupported provider.api value: ${api}. Using ${apiMode}.`);
+    warn(`Unsupported provider.api value. Using ${apiMode}.`);
   }
 
   return apiMode;
@@ -186,7 +185,7 @@ function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
     return value;
   }
 
-  console.warn(`[OmniRoute] Unsupported apiMode option: ${String(value)}. Using chat.`);
+  warn('Unsupported apiMode option. Using chat.');
   return 'chat';
 }
 
@@ -208,13 +207,13 @@ function getBaseUrl(options?: Record<string, unknown>): string {
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      console.warn(`[OmniRoute] Ignoring unsupported baseURL protocol: ${parsed.protocol}`);
+      warn(`Ignoring unsupported baseURL protocol: ${parsed.protocol}`);
       return OMNIROUTE_ENDPOINTS.BASE_URL;
     }
 
     return trimmed;
   } catch {
-    console.warn(`[OmniRoute] Ignoring invalid baseURL: ${trimmed}`);
+    warn(`Ignoring invalid baseURL: ${trimmed}`);
     return OMNIROUTE_ENDPOINTS.BASE_URL;
   }
 }
@@ -440,7 +439,7 @@ function createFetchInterceptor(
       return fetch(input, init);
     }
 
-    console.log(`[OmniRoute] Intercepting request to ${url}`);
+    debug(`Intercepting request to ${url}`);
 
     // Merge headers from Request and init to avoid dropping existing headers
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
@@ -468,7 +467,7 @@ function createFetchInterceptor(
 
     // Handle model fetching endpoint specially
     if (url.includes('/v1/models') && response.ok) {
-      console.log('[OmniRoute] Processing /v1/models response');
+      debug('Processing /v1/models response');
     }
 
     return response;
@@ -518,7 +517,7 @@ async function sanitizeGeminiToolSchemas(
     return undefined;
   }
 
-  console.log('[OmniRoute] Sanitized Gemini tool schema keywords');
+  debug('Sanitized Gemini tool schema keywords');
   return JSON.stringify(clonedPayload);
 }
 
