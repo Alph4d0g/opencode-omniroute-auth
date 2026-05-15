@@ -7,6 +7,7 @@ import {
   normalizeModelKey,
 } from './models-dev.js';
 import { REQUEST_TIMEOUT } from './constants.js';
+import { warn, debug } from './logger.js';
 
 /**
  * OmniRoute combo definition from /api/combos
@@ -55,12 +56,12 @@ export async function fetchComboData(
 
   // Check cache first
   if (comboCache && Date.now() - comboCache.timestamp < COMBO_CACHE_TTL) {
-    console.log('[OmniRoute] Using cached combo data');
+    debug('Using cached combo data');
     return comboCache.combos;
   }
 
   const combosUrl = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
-  console.log(`[OmniRoute] Fetching combo data from ${combosUrl}`);
+  debug(`Fetching combo data from ${combosUrl}`);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
@@ -76,7 +77,7 @@ export async function fetchComboData(
     });
 
     if (!response.ok) {
-      console.warn(`[OmniRoute] Failed to fetch combo data: ${response.status}`);
+      warn(`Failed to fetch combo data: ${response.status}`);
       return null;
     }
 
@@ -84,7 +85,7 @@ export async function fetchComboData(
 
     // Validate structure
     if (!data?.combos || !Array.isArray(data.combos)) {
-      console.warn('[OmniRoute] Invalid combo data structure');
+      warn('Invalid combo data structure');
       return null;
     }
 
@@ -102,10 +103,10 @@ export async function fetchComboData(
       timestamp: Date.now(),
     };
 
-    console.log(`[OmniRoute] Successfully fetched ${comboMap.size} combos`);
+    debug(`Successfully fetched ${comboMap.size} combos`);
     return comboMap;
   } catch (error) {
-    console.warn('[OmniRoute] Error fetching combo data:', error);
+    warn(`Error fetching combo data: ${error}`);
     return null;
   } finally {
     clearTimeout(timeoutId);
@@ -117,7 +118,7 @@ export async function fetchComboData(
  */
 export function clearComboCache(): void {
   comboCache = null;
-  console.log('[OmniRoute] Combo cache cleared');
+  debug('Combo cache cleared');
 }
 
 /**
@@ -138,7 +139,7 @@ export async function resolveUnderlyingModels(
   // Check if this is a combo model
   const combo = combos.get(modelId);
   if (combo) {
-    console.log(`[OmniRoute] Resolved combo "${modelId}" to ${combo.models.length} underlying models`);
+    debug(`Resolved combo "${modelId}" to ${combo.models.length} underlying models`);
     return combo.models
       .map((m) => {
         if (typeof m === 'string') return m;
@@ -146,7 +147,7 @@ export async function resolveUnderlyingModels(
           const modelId = (m as Record<string, unknown>).model ?? (m as Record<string, unknown>).id;
           if (typeof modelId === 'string') return modelId;
         }
-        console.warn('[OmniRoute] Unexpected model entry in combo:', m);
+        warn(`Unexpected model entry in combo: ${JSON.stringify(m)}`);
         return null;
       })
       .filter((m): m is string => m !== null);
@@ -273,7 +274,7 @@ export async function calculateModelCapabilities(
   }
 
   // It's a combo - lookup all underlying models
-  console.log(`[OmniRoute] Calculating capabilities for combo "${model.id}" from ${underlyingModels.length} models`);
+  debug(`Calculating capabilities for combo "${model.id}" from ${underlyingModels.length} models`);
 
   const resolvedModels: ModelsDevModel[] = [];
   const unresolvedModels: string[] = [];
@@ -288,23 +289,23 @@ export async function calculateModelCapabilities(
   }
 
   if (unresolvedModels.length > 0) {
-    console.warn(
-      `[OmniRoute] Could not resolve ${unresolvedModels.length} underlying models for "${model.id}": ${unresolvedModels.join(', ')}`,
+    warn(
+      `Could not resolve ${unresolvedModels.length} underlying models for "${model.id}": ${unresolvedModels.join(', ')}`,
     );
   }
 
   if (resolvedModels.length === 0) {
-    console.warn(`[OmniRoute] No models.dev matches found for combo "${model.id}"`);
+    warn(`No models.dev matches found for combo "${model.id}"`);
     return {};
   }
 
-  console.log(`[OmniRoute] Resolved ${resolvedModels.length}/${underlyingModels.length} underlying models for "${model.id}"`);
+  debug(`Resolved ${resolvedModels.length}/${underlyingModels.length} underlying models for "${model.id}"`);
 
   // Calculate lowest common capabilities
   const capabilities = calculateLowestCommonCapabilities(resolvedModels);
 
-  console.log(
-    `[OmniRoute] Calculated capabilities for "${model.id}": context=${capabilities.contextWindow ?? 'N/A'}, maxTokens=${capabilities.maxTokens ?? 'N/A'}, vision=${capabilities.supportsVision ?? false}, tools=${capabilities.supportsTools ?? false}`,
+  debug(
+    `Calculated capabilities for "${model.id}": context=${capabilities.contextWindow ?? 'N/A'}, maxTokens=${capabilities.maxTokens ?? 'N/A'}, vision=${capabilities.supportsVision ?? false}, tools=${capabilities.supportsTools ?? false}`,
   );
 
   return capabilities;
@@ -352,7 +353,7 @@ export async function enrichComboModels(
         return model;
       }
 
-      console.log(`[OmniRoute] Enriching combo model: ${model.id}`);
+      debug(`Enriching combo model: ${model.id}`);
 
       // Calculate capabilities for this combo
       const capabilities = await calculateModelCapabilities(model, config, modelsDevIndex);
