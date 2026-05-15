@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.4] - 2026-05-15
+
+### Added
+
+- Added `provider` hook for OpenCode >=1.14.49 model listing API (`ProviderHook`), enabling dynamic model fetching when authentication is available. (@kkMihai)
+- Added `ProviderHook`, `ProviderHookContext`, `ProviderV2`, and `ModelV2` type definitions matching the `@opencode-ai/plugin` v1.14.50 API. (@kkMihai)
+- Added 3 regression tests covering provider hook behavior: live model fetch with auth, fallback without auth, and error recovery. (@kkMihai)
+- Added `createMockFetch()` test helper to isolate `/v1/models` call counting from enrichment endpoint mocks. (@kkMihai)
+
+### Fixed
+
+- Fixed model picker only showing 4 hardcoded fallback models on OpenCode >=1.14.49 by supplying models through the new `provider` hook `models` callback. (@kkMihai)
+- Fixed stale `provider.models` fallback in no-auth branch of provider hook to always return plugin-native defaults with correct `api.url` and `providerID` metadata. (@Alph4d0g)
+- Fixed misleading comment in fetch-failure recovery test to accurately describe the code path. (@Alph4d0g)
+
+### Changed
+
+- Improved test coverage for unauthenticated state to explicitly verify that stale host-provided models are ignored. (@Alph4d0g)
+- Improved formatting consistency in type definitions. (@Alph4d0g)
+
 ## [1.1.3] - 2026-05-15
 
 ### Added
