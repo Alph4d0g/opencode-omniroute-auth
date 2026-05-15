@@ -323,7 +323,7 @@ test('provider hook fetches models when auth is available via context', async ()
   assert.equal(result['live-model'].providerID, 'omniroute');
 });
 
-test('provider hook falls back to defaults when no auth available', async () => {
+test('provider hook ignores stale provider.models and returns defaults when no auth available', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 
   global.fetch = async () => {
@@ -337,14 +337,24 @@ test('provider hook falls back to defaults when no auth available', async () => 
       source: 'config',
       env: [],
       options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
-      models: {},
+      models: {
+        'stale-model': {
+          id: 'stale-model',
+          name: 'Stale',
+          providerID: 'wrong-provider',
+          api: { id: 'stale-model', url: 'http://wrong-url', npm: 'wrong-npm' },
+        },
+      },
     },
     {}, // no auth
   );
 
-  // Should return default models (gpt-4o, gpt-4o-mini, etc.)
+  // Should return default models (gpt-4o, gpt-4o-mini, etc.), NOT stale provider.models
   assert.ok(result['gpt-4o']);
   assert.equal(result['gpt-4o'].providerID, 'omniroute');
+  assert.equal(result['gpt-4o'].api.url, 'http://localhost:20128/v1');
+  // Stale model must NOT be present
+  assert.equal(result['stale-model'], undefined);
 });
 
 test('provider hook returns defaults when fetch fails (fetchModels handles errors)', async () => {
@@ -369,7 +379,8 @@ test('provider hook returns defaults when fetch fails (fetchModels handles error
   // fetchModels catches errors and returns defaults, so we get default models
   assert.ok(result['gpt-4o']);
   assert.equal(result['gpt-4o'].providerID, 'omniroute');
-  // Existing provider models are NOT returned because fetchModels handles the error internally
+  // When auth is present but fetch fails, fetchModels catches the error and
+  // returns default models. The provider.models fallback is NOT used.
   assert.equal(result['existing-model'], undefined);
 });
 
