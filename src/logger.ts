@@ -28,13 +28,8 @@ function findCurrentLogFile(): string | null {
   }
 }
 
-// Resolve log file path at module load (wrapped in try/catch per spec)
-let cachedLogFile: string | null;
-try {
-  cachedLogFile = findCurrentLogFile();
-} catch {
-  cachedLogFile = null;
-}
+// Resolve log file path at module load
+let cachedLogFile: string | null = findCurrentLogFile();
 
 function getLogFile(): string | null {
   if (cachedLogFile === null) {

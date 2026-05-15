@@ -163,13 +163,13 @@ async function readAuthFromStore(
 function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteApiMode {
   if (isApiMode(api)) {
     if (api !== apiMode) {
-      warn('provider.api and options.apiMode differ; using options.apiMode');
+      warn(`provider.api (${api}) and options.apiMode (${apiMode}) differ; using options.apiMode`);
     }
     return apiMode;
   }
 
   if (typeof api === 'string') {
-    warn(`Unsupported provider.api value. Using ${apiMode}.`);
+    warn(`Unsupported provider.api value: ${api}. Using ${apiMode}.`);
   }
 
   return apiMode;
@@ -185,7 +185,7 @@ function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
     return value;
   }
 
-  warn('Unsupported apiMode option. Using chat.');
+  warn(`Unsupported apiMode option: ${String(value)}. Using chat.`);
   return 'chat';
 }
 
