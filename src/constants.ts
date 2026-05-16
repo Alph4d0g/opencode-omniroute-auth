@@ -74,6 +74,12 @@ export const MODEL_CACHE_TTL = 5 * 60 * 1000;
 export const REQUEST_TIMEOUT = 30000;
 
 /**
+ * Default model limits
+ */
+export const DEFAULT_CONTEXT_LIMIT = 4096;
+export const DEFAULT_OUTPUT_LIMIT = 4096;
+
+/**
  * models.dev enrichment defaults
  */
 export const MODELS_DEV_DEFAULT_URL = 'https://models.dev/api.json';
