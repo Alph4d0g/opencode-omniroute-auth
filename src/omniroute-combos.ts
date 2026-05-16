@@ -9,6 +9,10 @@ import {
 import { REQUEST_TIMEOUT } from './constants.js';
 import { warn, debug } from './logger.js';
 
+function sanitizeForLog(value: string): string {
+  return value.replace(/[\r\n]/g, '');
+}
+
 /**
  * OmniRoute combo definition from /api/combos
  */
@@ -139,7 +143,7 @@ export async function resolveUnderlyingModels(
   // Check if this is a combo model
   const combo = combos.get(modelId);
   if (combo) {
-    debug(`Resolved combo "${modelId}" to ${combo.models.length} underlying models`);
+    debug(`Resolved combo "${sanitizeForLog(modelId)}" to ${combo.models.length} underlying models`);
     return combo.models
       .map((m) => {
         if (typeof m === 'string') return m;
@@ -274,7 +278,7 @@ export async function calculateModelCapabilities(
   }
 
   // It's a combo - lookup all underlying models
-  debug(`Calculating capabilities for combo "${model.id}" from ${underlyingModels.length} models`);
+  debug(`Calculating capabilities for combo "${sanitizeForLog(model.id)}" from ${underlyingModels.length} models`);
 
   const resolvedModels: ModelsDevModel[] = [];
   const unresolvedModels: string[] = [];
@@ -290,22 +294,22 @@ export async function calculateModelCapabilities(
 
   if (unresolvedModels.length > 0) {
     warn(
-      `Could not resolve ${unresolvedModels.length} underlying models for "${model.id}": ${unresolvedModels.join(', ')}`,
+      `Could not resolve ${unresolvedModels.length} underlying models for "${sanitizeForLog(model.id)}": ${unresolvedModels.map(sanitizeForLog).join(', ')}`,
     );
   }
 
   if (resolvedModels.length === 0) {
-    warn(`No models.dev matches found for combo "${model.id}"`);
+    warn(`No models.dev matches found for combo "${sanitizeForLog(model.id)}"`);
     return {};
   }
 
-  debug(`Resolved ${resolvedModels.length}/${underlyingModels.length} underlying models for "${model.id}"`);
+  debug(`Resolved ${resolvedModels.length}/${underlyingModels.length} underlying models for "${sanitizeForLog(model.id)}"`);
 
   // Calculate lowest common capabilities
   const capabilities = calculateLowestCommonCapabilities(resolvedModels);
 
   debug(
-    `Calculated capabilities for "${model.id}": context=${capabilities.contextWindow ?? 'N/A'}, maxTokens=${capabilities.maxTokens ?? 'N/A'}, vision=${capabilities.supportsVision ?? false}, tools=${capabilities.supportsTools ?? false}`,
+    `Calculated capabilities for "${sanitizeForLog(model.id)}": context=${capabilities.contextWindow ?? 'N/A'}, maxTokens=${capabilities.maxTokens ?? 'N/A'}, vision=${capabilities.supportsVision ?? false}, tools=${capabilities.supportsTools ?? false}`,
   );
 
   return capabilities;
@@ -353,7 +357,7 @@ export async function enrichComboModels(
         return model;
       }
 
-      debug(`Enriching combo model: ${model.id}`);
+      debug(`Enriching combo model: ${sanitizeForLog(model.id)}`);
 
       // Calculate capabilities for this combo
       const capabilities = await calculateModelCapabilities(model, config, modelsDevIndex);
