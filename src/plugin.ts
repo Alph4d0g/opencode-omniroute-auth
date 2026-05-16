@@ -543,9 +543,9 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProvi
     status: 'active',
     variants: supportsReasoning
       ? {
-          low: { reasoningEffort: 'low' as const },
-          medium: { reasoningEffort: 'medium' as const },
-          high: { reasoningEffort: 'high' as const },
+          low: { reasoningEffort: 'low' },
+          medium: { reasoningEffort: 'medium' },
+          high: { reasoningEffort: 'high' },
         }
       : {},
   };
