@@ -59,6 +59,9 @@ test('warn() writes to log file with correct format', async () => {
 
   warn('Test warning message');
 
+  // Wait for async appendFile to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
+
   const content = readFileSync(testLogFile, 'utf-8');
   assert.ok(content.includes('Test warning message'), 'warn should write message');
   assert.ok(content.includes('WARN'), 'log should have WARN level');
@@ -81,6 +84,9 @@ test('debug() writes when OMNIROUTE_DEBUG=1', async () => {
   const { debug } = await import('../dist/src/logger.js#' + Date.now() + '-' + Math.random());
 
   debug('Test debug message');
+
+  // Wait for async appendFile to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
 
   const content = readFileSync(testLogFile, 'utf-8');
   assert.ok(content.includes('Test debug message'), 'debug should write when enabled');
@@ -142,6 +148,9 @@ test('warn() always writes regardless of OMNIROUTE_DEBUG', async () => {
 
   warn('Test warning message');
 
+  // Wait for async appendFile to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
+
   const content = readFileSync(testLogFile, 'utf-8');
   assert.ok(content.includes('Test warning message'), 'warn should always write');
 
@@ -168,11 +177,17 @@ test('logger handles log file rotation', async () => {
   const { warn } = await import(`../dist/src/logger.js#${Date.now()}-${Math.random()}`);
   warn('First message');
 
+  // Wait for first async write to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
+
   // Simulate log rotation: delete old file, create new one
   rmSync(oldLogFile);
   const newLogFile = createTestLogFile('test-new.log');
 
   warn('Second message after rotation');
+
+  // Wait for second async write to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
 
   const content = readFileSync(newLogFile, 'utf-8');
   assert.ok(
@@ -194,6 +209,9 @@ test('logger re-scans when no log file exists at module load', async () => {
   const testLogFile = createTestLogFile('test-rescan.log');
 
   warn('Message after log file created');
+
+  // Wait for async appendFile to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
 
   const content = readFileSync(testLogFile, 'utf-8');
   assert.ok(content.includes('Message after log file created'), 'should re-scan and write to new log file');
@@ -261,6 +279,9 @@ test('logger excludes directories with .log suffix', async () => {
   const { warn } = await import(`../dist/src/logger.js#${Date.now()}-${Math.random()}`);
   warn('Test directory exclusion');
 
+  // Wait for async appendFile to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
+
   const content = readFileSync(testLogFile, 'utf-8');
   assert.ok(content.includes('Test directory exclusion'), 'should write to real log file, not directory');
 
@@ -281,6 +302,9 @@ test('logger uses alphabetical tie-breaker for identical mtime', async () => {
 
   const { warn } = await import(`../dist/src/logger.js#${Date.now()}-${Math.random()}`);
   warn('Test tie-breaker');
+
+  // Wait for async appendFile to complete
+  await new Promise(resolve => setTimeout(resolve, 50));
 
   // Should write to test-alpha.log (alphabetically first)
   const contentA = readFileSync(fileA, 'utf-8');

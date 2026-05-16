@@ -1,4 +1,5 @@
-import { appendFileSync, readdirSync, statSync, existsSync } from 'fs';
+import { readdirSync, statSync, existsSync } from 'fs';
+import { appendFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -32,62 +33,34 @@ function findCurrentLogFile(): string | null {
 let cachedLogFile: string | null = findCurrentLogFile();
 
 function getLogFile(): string | null {
-  if (cachedLogFile === null) {
-    // Re-scan if no file found at module load (OpenCode may create one later)
+  if (cachedLogFile === null || !existsSync(cachedLogFile)) {
+    // Re-scan if no file found at module load or if cached file was deleted (log rotation)
     cachedLogFile = findCurrentLogFile();
   }
   return cachedLogFile;
 }
 
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    typeof (error as NodeJS.ErrnoException).code === 'string'
-  );
-}
-
-function writeLog(level: string, message: string): void {
-  let logFile = getLogFile();
-  if (!logFile) return;
-
-  // Check if cached file still exists (handles log rotation)
-  if (!existsSync(logFile)) {
-    cachedLogFile = findCurrentLogFile();
-    logFile = cachedLogFile;
-    if (!logFile) return;
-  }
-
+function formatLogLine(level: string, message: string): string {
   const timestamp = new Date().toISOString();
-  const line = `${level.padEnd(5)} ${timestamp} +0ms service=omniroute ${message}\n`;
-
-  try {
-    appendFileSync(logFile, line);
-  } catch (error: unknown) {
-    if (isNodeError(error) && error.code === 'ENOENT') {
-      // Log file was deleted, re-scan
-      cachedLogFile = findCurrentLogFile();
-      // Retry once with new file
-      const newLogFile = cachedLogFile;
-      if (newLogFile) {
-        try {
-          appendFileSync(newLogFile, line);
-        } catch {
-          // Silently fail on second attempt
-        }
-      }
-    }
-    // Silently fail for all other errors
-  }
+  return `${level.padEnd(5)} ${timestamp} +0ms service=omniroute ${message}\n`;
 }
 
 export function warn(message: string): void {
-  writeLog('WARN', message);
+  const logFile = getLogFile();
+  if (!logFile) return;
+
+  const line = formatLogLine('WARN', message);
+  // Fire-and-forget: don't await, don't crash on error
+  appendFile(logFile, line).catch(() => {});
 }
 
 export function debug(message: string): void {
   // Strict comparison: only "1" enables debug logging
   if (process.env.OMNIROUTE_DEBUG !== '1') return;
-  writeLog('DEBUG', message);
+
+  const logFile = getLogFile();
+  if (!logFile) return;
+
+  const line = formatLogLine('DEBUG', message);
+  appendFile(logFile, line).catch(() => {});
 }
