@@ -304,11 +304,20 @@ function applyModelsDevMetadata(
 
 function getModelLookupCandidates(modelKey: string): string[] {
   const candidates = new Set<string>();
+
   const addCandidate = (key: string): void => {
-    candidates.add(key.toLowerCase());
-    candidates.add(resolveModelAlias(key).toLowerCase());
-    candidates.add(normalizeModelKey(key));
-    candidates.add(normalizeModelKey(resolveModelAlias(key)));
+    const lower = key.toLowerCase();
+    const normalized = normalizeModelKey(key);
+    const aliasResolved = resolveModelAlias(key);
+
+    candidates.add(lower);
+    candidates.add(normalized);
+
+    // Only add alias variants if they differ from original
+    if (aliasResolved !== key) {
+      candidates.add(aliasResolved.toLowerCase());
+      candidates.add(normalizeModelKey(aliasResolved));
+    }
   };
 
   addCandidate(modelKey);
