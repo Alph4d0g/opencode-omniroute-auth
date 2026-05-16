@@ -10,11 +10,14 @@ import type {
   OmniRouteModelMetadataConfig,
   OmniRouteModelsDevConfig,
   OmniRouteProviderModel,
+  OmniRouteModelVariant,
 } from './types.js';
 import {
   OMNIROUTE_PROVIDER_ID,
   OMNIROUTE_DEFAULT_MODELS,
   OMNIROUTE_ENDPOINTS,
+  DEFAULT_CONTEXT_LIMIT,
+  DEFAULT_OUTPUT_LIMIT,
 } from './constants.js';
 import { fetchModels } from './models.js';
 import { warn, debug } from './logger.js';
@@ -494,8 +497,8 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProvi
     temperature: supportsTemperature,
     tool_call: supportsTools,
     modalities: {
-      input: supportsVision ? ['text', 'image'] as const : ['text'] as const,
-      output: ['text'] as const,
+      input: supportsVision ? ['text', 'image'] : ['text'],
+      output: ['text'],
     },
     api: {
       id: model.id,
@@ -532,17 +535,17 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProvi
       },
     },
     limit: {
-      context: model.contextWindow ?? 4096,
-      output: model.maxTokens ?? 4096,
+      context: model.contextWindow ?? DEFAULT_CONTEXT_LIMIT,
+      output: model.maxTokens ?? DEFAULT_OUTPUT_LIMIT,
     },
     options: {},
     headers: {},
     status: 'active',
     variants: supportsReasoning
       ? {
-          low: { reasoningEffort: 'low' },
-          medium: { reasoningEffort: 'medium' },
-          high: { reasoningEffort: 'high' },
+          low: { reasoningEffort: 'low' as const },
+          medium: { reasoningEffort: 'medium' as const },
+          high: { reasoningEffort: 'high' as const },
         }
       : {},
   };

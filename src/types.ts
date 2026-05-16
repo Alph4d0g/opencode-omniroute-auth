@@ -151,7 +151,15 @@ export interface OmniRouteProviderModel {
   options: Record<string, unknown>;
   headers: Record<string, string>;
   status: 'active';
-  variants: Record<string, unknown>;
+  variants: Record<string, OmniRouteModelVariant>;
+}
+
+/**
+ * Model variant configuration
+ */
+export interface OmniRouteModelVariant {
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  // Future variant types can be added here
 }
 
 /**
