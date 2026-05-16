@@ -159,7 +159,7 @@ export interface OmniRouteProviderModel {
  */
 export interface OmniRouteModelVariant {
   reasoningEffort?: 'low' | 'medium' | 'high';
-  // Future variant types can be added here
+  [key: string]: unknown;
 }
 
 /**
