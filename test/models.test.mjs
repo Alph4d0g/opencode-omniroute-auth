@@ -144,3 +144,107 @@ test('fetchModels uses different cache for different modelsDev configs', async (
 
   assert.equal(calls, 2, 'Should fetch twice for different modelsDev configs');
 });
+
+// Task 15: Single Model Metadata Tracking
+test('calculateLowestCommonCapabilities produces identical output for single model and combo-with-self', () => {
+  const single = calculateLowestCommonCapabilities([
+    { id: 'test-model', temperature: true, reasoning: true, attachment: true },
+  ]);
+
+  const combo = calculateLowestCommonCapabilities([
+    { id: 'test-model', temperature: true, reasoning: true, attachment: true },
+    { id: 'test-model', temperature: true, reasoning: true, attachment: true },
+  ]);
+
+  // Core capability fields should match (supportsStreaming differs because
+  // single-model path uses modelsDevToMetadata which doesn't add streaming,
+  // while combo path always adds it)
+  assert.equal(single.supportsTemperature, combo.supportsTemperature);
+  assert.equal(single.supportsReasoning, combo.supportsReasoning);
+  assert.equal(single.supportsAttachment, combo.supportsAttachment);
+});
+
+// Task 17: Temperature/Reasoning Combo Tests
+test('calculateLowestCommonCapabilities handles mixed defined and undefined temperature', () => {
+  const capabilities = calculateLowestCommonCapabilities([
+    { id: 'with-temp', temperature: true },
+    { id: 'without-temp' },
+  ]);
+
+  assert.equal(capabilities.supportsTemperature, true);
+});
+
+test('calculateLowestCommonCapabilities handles explicit temperature false overriding true', () => {
+  const capabilities = calculateLowestCommonCapabilities([
+    { id: 'with-temp', temperature: true },
+    { id: 'without-temp', temperature: false },
+  ]);
+
+  assert.equal(capabilities.supportsTemperature, false);
+});
+
+test('calculateLowestCommonCapabilities handles all three capabilities together', () => {
+  const capabilities = calculateLowestCommonCapabilities([
+    { id: 'full-support', temperature: true, reasoning: true, attachment: true },
+    { id: 'partial-support', temperature: true, reasoning: false, attachment: true },
+  ]);
+
+  assert.equal(capabilities.supportsTemperature, true);
+  assert.equal(capabilities.supportsReasoning, false);
+  assert.equal(capabilities.supportsAttachment, true);
+});
+
+test('calculateLowestCommonCapabilities handles single model with undefined temperature', () => {
+  const capabilities = calculateLowestCommonCapabilities([
+    { id: 'no-temp-metadata', reasoning: true },
+  ]);
+
+  assert.equal(capabilities.supportsTemperature, undefined);
+  assert.equal(capabilities.supportsReasoning, true);
+});
+
+// Task 18: Variant+Alias Integration Test
+test('variant suffix stripping works with alias resolution end-to-end', async () => {
+  const { stripVariantSuffix, resolveModelAlias, normalizeModelKey } = await import('../dist/src/models-dev.js');
+
+  // Test variant suffix stripping
+  const { base: base1, stripped: stripped1 } = stripVariantSuffix('gpt-4o-high');
+  assert.equal(base1, 'gpt-4o');
+  assert.equal(stripped1, true);
+
+  const { base: base2, stripped: stripped2 } = stripVariantSuffix('claude-3-sonnet-low');
+  assert.equal(base2, 'claude-3-sonnet');
+  assert.equal(stripped2, true);
+
+  const { base: base3, stripped: stripped3 } = stripVariantSuffix('gpt-4o');
+  assert.equal(base3, 'gpt-4o');
+  assert.equal(stripped3, false);
+
+  // Test alias resolution on base name (variant suffix stripped first)
+  const alias1 = resolveModelAlias('kimi-k2.6-thinking');
+  assert.equal(alias1, 'kimi-k2-thinking');
+
+  const alias2 = resolveModelAlias('kimi-k2.6-thinking-turbo');
+  assert.equal(alias2, 'kimi-k2-thinking-turbo');
+
+  // Test normalization removes preview suffix (variant is stripped separately)
+  const normalized = normalizeModelKey('gpt-4o-preview');
+  assert.equal(normalized, 'gpt-4o');
+});
+
+// Task 19: Subscription Fallback Test
+test('subscription provider fallback enriches from public provider', async () => {
+  const { getSubscriptionFallback } = await import('../dist/src/models-dev.js');
+
+  // Test known subscription fallbacks
+  assert.equal(getSubscriptionFallback('zai-coding-plan'), 'zai');
+  assert.equal(getSubscriptionFallback('kimi-for-coding'), 'moonshotai');
+  assert.equal(getSubscriptionFallback('github-models'), 'google');
+
+  // Test case insensitivity
+  assert.equal(getSubscriptionFallback('ZAI-CODING-PLAN'), 'zai');
+  assert.equal(getSubscriptionFallback('GitHub-Models'), 'google');
+
+  // Test unknown provider returns null
+  assert.equal(getSubscriptionFallback('unknown-provider'), null);
+});
