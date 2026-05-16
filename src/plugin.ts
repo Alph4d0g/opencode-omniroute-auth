@@ -18,6 +18,7 @@ import {
 } from './constants.js';
 import { fetchModels } from './models.js';
 import { warn, debug } from './logger.js';
+import { sanitizeForLog } from './omniroute-combos.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
@@ -143,7 +144,7 @@ async function loadProviderOptions(
   try {
     const forceRefresh = config.refreshOnList !== false;
     models = await fetchModels(config, config.apiKey, forceRefresh);
-    debug(`Available models: ${models.map((model) => model.id).join(', ')}`);
+    debug(`Available models: ${models.map((model) => sanitizeForLog(model.id)).join(', ')}`);
   } catch (error) {
     warn(`Failed to fetch models, using defaults: ${error}`);
     models = OMNIROUTE_DEFAULT_MODELS;
@@ -206,13 +207,13 @@ async function readAuthFromStore(
 function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteApiMode {
   if (isApiMode(api)) {
     if (api !== apiMode) {
-      warn(`provider.api (${api}) and options.apiMode (${apiMode}) differ; using options.apiMode`);
+      warn(`provider.api (${sanitizeForLog(String(api))}) and options.apiMode (${sanitizeForLog(apiMode)}) differ; using options.apiMode`);
     }
     return apiMode;
   }
 
   if (typeof api === 'string') {
-    warn(`Unsupported provider.api value: ${api}. Using ${apiMode}.`);
+    warn(`Unsupported provider.api value: ${sanitizeForLog(String(api))}. Using ${sanitizeForLog(apiMode)}.`);
   }
 
   return apiMode;
@@ -228,7 +229,7 @@ function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
     return value;
   }
 
-  warn(`Unsupported apiMode option: ${String(value)}. Using chat.`);
+    warn(`Unsupported apiMode option: ${sanitizeForLog(String(value))}. Using chat.`);
   return 'chat';
 }
 
@@ -250,13 +251,13 @@ function getBaseUrl(options?: Record<string, unknown>): string {
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      warn(`Ignoring unsupported baseURL protocol: ${parsed.protocol}`);
+      warn(`Ignoring unsupported baseURL protocol: ${sanitizeForLog(parsed.protocol)}`);
       return OMNIROUTE_ENDPOINTS.BASE_URL;
     }
 
     return trimmed;
   } catch {
-    warn(`Ignoring invalid baseURL: ${trimmed}`);
+    warn(`Ignoring invalid baseURL: ${sanitizeForLog(trimmed)}`);
     return OMNIROUTE_ENDPOINTS.BASE_URL;
   }
 }
@@ -368,7 +369,7 @@ function mergeModelMetadata(
     for (const [id, metadata] of Object.entries(userConfig)) {
       const validation = isValidModelMetadata(metadata);
       if (!validation.valid) {
-        warn(`Invalid metadata for model "${id}" (field: ${validation.field}), skipping`);
+        warn(`Invalid metadata for model "${sanitizeForLog(id)}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
         continue;
       }
       merged[id] = {
@@ -577,7 +578,7 @@ function createFetchInterceptor(
       return fetch(input, init);
     }
 
-    debug(`Intercepting request to ${url}`);
+    debug(`Intercepting request to ${sanitizeForLog(url)}`);
 
     // Merge headers from Request and init to avoid dropping existing headers
     const headers = new Headers(input instanceof Request ? input.headers : undefined);

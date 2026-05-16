@@ -9,8 +9,9 @@ import {
 import { REQUEST_TIMEOUT } from './constants.js';
 import { warn, debug } from './logger.js';
 
-function sanitizeForLog(value: string): string {
-  return value.replace(/[\r\n]/g, '');
+export function sanitizeForLog(value: string): string {
+  // Remove all control characters except tab (0x09)
+  return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
 /**

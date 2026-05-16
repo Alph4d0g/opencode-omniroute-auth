@@ -110,7 +110,9 @@ export async function fetchModels(
     // Runtime validation to ensure API returns expected structure
     if (!rawData || typeof rawData !== 'object' || !Array.isArray(rawData.data)) {
       const dataType = rawData && typeof rawData === 'object'
-        ? (Array.isArray(rawData.data) ? 'array' : typeof rawData.data)
+        ? (rawData.data === null
+            ? 'null'
+            : Array.isArray(rawData.data) ? 'array' : typeof rawData.data)
         : typeof rawData;
       warn(`Invalid models response structure: expected { data: Array }, got { data: ${dataType} }`);
       throw new Error('Invalid models response structure: expected { data: Array }');
