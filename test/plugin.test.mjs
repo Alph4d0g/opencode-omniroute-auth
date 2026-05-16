@@ -14,6 +14,10 @@ afterEach(() => {
   process.env.HOME = ORIGINAL_HOME;
 });
 
+function getDummyBaseUrl(port = 20128) {
+  return `http://localhost:${port}/v1`;
+}
+
 function createModelsResponse() {
   return {
     object: 'list',
@@ -32,7 +36,7 @@ test('config hook applies defaults and normalized apiMode', async () => {
     provider: {
       omniroute: {
         options: {
-          baseURL: 'http://localhost:20128/v1',
+          baseURL: getDummyBaseUrl(),
           apiMode: 'invalid-mode',
         },
       },
@@ -69,7 +73,7 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
 
   const provider = {
     options: {
-      baseURL: 'http://localhost:20128/v1',
+      baseURL: getDummyBaseUrl(),
       apiMode: 'chat',
     },
     models: {},
@@ -78,7 +82,7 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
   const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
   const interceptedFetch = options.fetch;
 
-  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
     method: 'POST',
     body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
   });
@@ -123,14 +127,14 @@ test('gemini tool schema payload is sanitized before forwarding', async () => {
   };
 
   const provider = {
-    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
     models: {},
   };
 
   const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
   const interceptedFetch = options.fetch;
 
-  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
     method: 'POST',
     body: JSON.stringify({
       model: 'gemini-2.5-pro',
@@ -188,14 +192,14 @@ test('non-gemini payload keeps original tool schema fields', async () => {
   };
 
   const provider = {
-    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
     models: {},
   };
 
   const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
   const interceptedFetch = options.fetch;
 
-  await interceptedFetch('http://localhost:20128/v1/chat/completions', {
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
     method: 'POST',
     body: JSON.stringify({
       model: 'gpt-4.1-mini',
@@ -244,14 +248,14 @@ test('gemini schema sanitization applies to responses endpoint request objects',
   };
 
   const provider = {
-    options: { baseURL: 'http://localhost:20128/v1', apiMode: 'responses' },
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
     models: {},
   };
 
   const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
   const interceptedFetch = options.fetch;
 
-  const request = new Request('http://localhost:20128/v1/responses', {
+  const request = new Request(`${getDummyBaseUrl()}/responses`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -312,7 +316,7 @@ test('provider hook fetches models when auth is available via context', async ()
       name: 'OmniRoute',
       source: 'config',
       env: [],
-      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
       models: {},
     },
     { auth: { type: 'api', key: 'live-key' } },
@@ -336,7 +340,7 @@ test('provider hook ignores stale provider.models and returns defaults when no a
       name: 'OmniRoute',
       source: 'config',
       env: [],
-      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
       models: {
         'stale-model': {
           id: 'stale-model',
@@ -370,7 +374,7 @@ test('provider hook returns defaults when fetch fails (fetchModels handles error
       name: 'OmniRoute',
       source: 'config',
       env: [],
-      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
       models: { 'existing-model': { id: 'existing-model', name: 'Existing', providerID: 'omniroute' } },
     },
     { auth: { type: 'api', key: 'bad-key' } },
@@ -418,7 +422,7 @@ test('config hook eagerly fetches models when auth is available', async () => {
       provider: {
         omniroute: {
           options: {
-            baseURL: 'http://localhost:20128/v1',
+            baseURL: getDummyBaseUrl(),
             apiMode: 'chat',
           },
         },
@@ -473,7 +477,7 @@ test('config hook preserves user modelMetadata object overrides', async () => {
       provider: {
         omniroute: {
           options: {
-            baseURL: 'http://localhost:20129/v1',
+            baseURL: getDummyBaseUrl(20129),
             modelMetadata: {
               'cx/gpt-5.5': {
                 contextWindow: 258000,
@@ -530,7 +534,7 @@ test('config hook preserves user modelMetadata match blocks', async () => {
       provider: {
         omniroute: {
           options: {
-            baseURL: 'http://localhost:20130/v1',
+            baseURL: getDummyBaseUrl(20130),
             modelMetadata: [userBlock],
           },
         },
@@ -588,7 +592,7 @@ test('config hook respects explicit attachment false for vision models', async (
       provider: {
         omniroute: {
           options: {
-            baseURL: 'http://localhost:20131/v1',
+            baseURL: getDummyBaseUrl(20131),
           },
         },
       },
