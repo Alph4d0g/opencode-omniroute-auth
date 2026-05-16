@@ -328,6 +328,9 @@ export function calculateLowestCommonCapabilities(
     allSupportVision = allSupportVision && supportsVision;
 
     // Tools: all must support it
+    // For combos: only advertise tools if ALL underlying models explicitly support them
+    // This is intentionally stricter than single-model defaults because a combo
+    // with one tool-less model cannot reliably use tools across all backends
     const supportsTools = model.tool_call === true;
     allSupportTools = allSupportTools && supportsTools;
 

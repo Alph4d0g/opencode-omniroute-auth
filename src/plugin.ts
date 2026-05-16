@@ -475,6 +475,8 @@ function toProviderModels(
 
 function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProviderModel {
   const supportsVision = model.supportsVision === true;
+  // Default to true: if API doesn't explicitly say no tools, assume capability exists
+  // This aligns with OpenAI-compatible behavior where most models support tools
   const supportsTools = model.supportsTools !== false;
   const supportsTemperature = model.supportsTemperature !== false;
   const supportsReasoning = model.supportsReasoning === true;
