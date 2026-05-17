@@ -76,7 +76,7 @@ export const REQUEST_TIMEOUT = 30000;
 /**
  * Default model limits
  */
-export const DEFAULT_CONTEXT_LIMIT = 4096;
+export const DEFAULT_CONTEXT_LIMIT = 128000;
 export const DEFAULT_OUTPUT_LIMIT = 4096;
 
 /**
