@@ -85,3 +85,15 @@ export const DEFAULT_OUTPUT_LIMIT = 4096;
 export const MODELS_DEV_DEFAULT_URL = 'https://models.dev/api.json';
 export const MODELS_DEV_CACHE_TTL = 24 * 60 * 60 * 1000;
 export const MODELS_DEV_TIMEOUT_MS = 1000;
+
+/**
+ * Provider alias-to-canonical mapping for deduplication
+ */
+export const PROVIDER_ALIAS_TO_CANONICAL: Record<string, string> = {
+  ollamacloud: 'ollama-cloud',
+  cc: 'claude',
+  gh: 'github',
+  cx: 'codex',
+  kr: 'kiro',
+  if: 'qoder',
+};
