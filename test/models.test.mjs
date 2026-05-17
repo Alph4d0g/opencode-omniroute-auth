@@ -248,3 +248,134 @@ test('subscription provider fallback enriches from public provider', async () =>
   // Test unknown provider returns null
   assert.equal(getSubscriptionFallback('unknown-provider'), null);
 });
+
+// Task 21: Normalization of snake_case and capabilities fields
+test('normalizeModel reads snake_case fields', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    if (url.includes('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'test/model-1',
+              name: 'Test Model',
+              context_length: 128000,
+              max_output_tokens: 4096,
+              capabilities: {
+                vision: true,
+                tool_calling: true,
+                reasoning: true,
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+
+  const models = await fetchModels(CONFIG, CONFIG.apiKey, false);
+  const model = models.find(m => m.id === 'test/model-1');
+
+  assert.ok(model, 'Model should be found');
+  assert.equal(model.contextWindow, 128000, 'Should read context_length');
+  assert.equal(model.maxTokens, 4096, 'Should read max_output_tokens');
+  assert.equal(model.supportsVision, true, 'Should read capabilities.vision');
+  assert.equal(model.supportsTools, true, 'Should read capabilities.tool_calling');
+  assert.equal(model.supportsReasoning, true, 'Should read capabilities.reasoning');
+});
+
+test('normalizeModel prefers camelCase over snake_case', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    if (url.includes('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'test/model-2',
+              contextWindow: 64000,
+              context_length: 32000,
+              capabilities: {
+                vision: false,
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+
+  const models = await fetchModels(CONFIG, CONFIG.apiKey, false);
+  const model = models.find(m => m.id === 'test/model-2');
+
+  assert.ok(model, 'Model should be found');
+  assert.equal(model.contextWindow, 64000, 'Should prefer camelCase over snake_case');
+});
+
+// Task 22: Deduplication of alias/canonical model entries
+test('deduplication removes alias when canonical exists', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    if (url.includes('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'ollamacloud/deepseek-v4',
+              name: 'DeepSeek V4 (alias)',
+              context_length: 64000,
+            },
+            {
+              id: 'ollama-cloud/deepseek-v4',
+              name: 'DeepSeek V4 (canonical)',
+              context_length: 128000,
+            }
+          ]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+
+  const models = await fetchModels(CONFIG, CONFIG.apiKey, false);
+
+  assert.equal(models.length, 1, 'Should deduplicate to single model');
+  assert.equal(models[0].id, 'ollama-cloud/deepseek-v4', 'Should prefer canonical ID');
+  assert.equal(models[0].contextWindow, 128000, 'Should use canonical metadata');
+});
+
+test('deduplication keeps alias when canonical is missing', async () => {
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    if (url.includes('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'ollamacloud/deepseek-v4',
+              name: 'DeepSeek V4',
+              context_length: 64000,
+            }
+          ]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  };
+
+  const models = await fetchModels(CONFIG, CONFIG.apiKey, false);
+
+  assert.equal(models.length, 1, 'Should keep single model');
+  assert.equal(models[0].id, 'ollama-cloud/deepseek-v4', 'Should normalize to canonical ID');
+});
