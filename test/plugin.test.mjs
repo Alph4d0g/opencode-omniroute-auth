@@ -490,7 +490,8 @@ test('config hook preserves user modelMetadata object overrides', async () => {
 
     await plugin.config(config);
 
-    const metadata = config.provider.omniroute.options.modelMetadata['cx/gpt-5.5'];
+    // User metadata is merged into canonical key after deduplication
+    const metadata = config.provider.omniroute.options.modelMetadata['codex/gpt-5.5'];
     assert.equal(metadata.contextWindow, 258000);
     assert.equal(metadata.supportsReasoning, true);
   } finally {
@@ -546,7 +547,8 @@ test('config hook preserves user modelMetadata match blocks', async () => {
     const metadata = config.provider.omniroute.options.modelMetadata;
     assert.ok(Array.isArray(metadata));
     assert.deepEqual(metadata.at(-1), userBlock);
-    assert.equal(metadata[0].match, 'cx/gpt-5.5');
+    // After deduplication, model ID is normalized to canonical form
+    assert.equal(metadata[0].match, 'codex/gpt-5.5');
     assert.equal(metadata[0].contextWindow, 1050000);
   } finally {
     await rm(tempHome, { recursive: true, force: true });

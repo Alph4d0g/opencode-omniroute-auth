@@ -19,7 +19,7 @@ import {
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_OUTPUT_LIMIT,
 } from './constants.js';
-import { fetchModels } from './models.js';
+import { fetchModels, resolveProviderAliasForMetadata, isProviderAlias } from './models.js';
 import { warn, debug } from './logger.js';
 import { sanitizeForLog } from './omniroute-combos.js';
 
@@ -57,7 +57,9 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
 
       const generatedModelMetadata: Record<string, OmniRouteModelMetadata> = {};
       for (const model of models) {
-        generatedModelMetadata[model.id] = {
+        // Use canonical ID for metadata keys to match user config
+        const metadataKey = resolveProviderAliasForMetadata(model.id);
+        generatedModelMetadata[metadataKey] = {
           contextWindow: model.contextWindow,
           maxTokens: model.maxTokens,
           supportsTemperature: model.supportsTemperature,
@@ -375,8 +377,11 @@ function mergeModelMetadata(
         warn(`Invalid metadata for model "${sanitizeForLog(id)}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
         continue;
       }
-      merged[id] = {
-        ...(generated[id] ?? {}),
+      // If user uses an alias key (e.g., 'cx/gpt-5.5'), merge into canonical key
+      // so it matches the generated metadata and deduplicated model IDs
+      const canonicalId = resolveProviderAliasForMetadata(id);
+      merged[canonicalId] = {
+        ...(merged[canonicalId] ?? {}),
         ...metadata,
       };
     }
