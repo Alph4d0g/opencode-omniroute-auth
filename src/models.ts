@@ -4,6 +4,7 @@ import {
   OMNIROUTE_ENDPOINTS,
   MODEL_CACHE_TTL,
   REQUEST_TIMEOUT,
+  PROVIDER_ALIAS_TO_CANONICAL,
 } from './constants.js';
 import {
   getModelsDevIndex,
@@ -46,6 +47,99 @@ function getCacheKey(config: OmniRouteConfig, apiKey: string): string {
     : '';
 
   return `${baseUrl}:${apiKey}:${modelsDevHash}`;
+}
+
+/**
+ * Normalize an OmniRoute model by reading all field variants
+ * with proper precedence: camelCase > snake_case > capabilities
+ */
+function normalizeModel(model: OmniRouteModel): OmniRouteModel {
+  const capabilities =
+    model.capabilities && typeof model.capabilities === 'object'
+      ? model.capabilities
+      : {};
+
+  return {
+    ...model,
+    id: model.id,
+    name: model.name || model.id,
+    description: model.description || `OmniRoute model: ${model.id}`,
+
+    // Context limits: prefer explicit camelCase, fallback to snake_case
+    contextWindow:
+      model.contextWindow ?? model.context_length ?? model.max_input_tokens,
+    maxTokens: model.maxTokens ?? model.max_output_tokens,
+
+    // Capabilities: prefer explicit camelCase, fallback to capabilities object, fallback to snake_case
+    supportsStreaming: model.supportsStreaming,
+    supportsVision:
+      model.supportsVision ??
+      model.vision ??
+      capabilities.vision ??
+      capabilities.attachment,
+    supportsTools:
+      model.supportsTools ??
+      model.tool_calling ??
+      capabilities.tool_calling ??
+      capabilities.toolcall,
+    supportsReasoning:
+      model.supportsReasoning ??
+      model.reasoning ??
+      capabilities.reasoning ??
+      capabilities.thinking,
+    supportsAttachment:
+      model.supportsAttachment ??
+      model.attachment ??
+      capabilities.attachment,
+    supportsTemperature:
+      model.supportsTemperature ??
+      model.temperature ??
+      capabilities.temperature,
+  };
+}
+
+/**
+ * Deduplicate models by canonical provider+model key.
+ * Prefers canonical-prefixed IDs over aliases.
+ */
+function deduplicateModels(models: OmniRouteModel[]): OmniRouteModel[] {
+  const seen = new Map<string, OmniRouteModel>();
+
+  for (const model of models) {
+    const parts = model.id.split('/');
+    if (parts.length !== 2) {
+      // Not a provider/model ID, keep as-is
+      seen.set(model.id, model);
+      continue;
+    }
+
+    const [providerPrefix, modelKey] = parts;
+    const canonicalPrefix =
+      PROVIDER_ALIAS_TO_CANONICAL[providerPrefix] || providerPrefix;
+    const canonicalId = `${canonicalPrefix}/${modelKey}`;
+
+    const existing = seen.get(canonicalId);
+    if (!existing) {
+      // First time seeing this model - store with canonical ID
+      seen.set(canonicalId, {
+        ...model,
+        id: canonicalId,
+      });
+    } else {
+      // Already have canonical version - merge metadata, prefer non-alias
+      const isAlias = providerPrefix !== canonicalPrefix;
+      if (!isAlias) {
+        // This is the canonical version, overwrite alias
+        seen.set(canonicalId, {
+          ...model,
+          id: canonicalId,
+        });
+      }
+      // If alias and we already have canonical, drop it
+    }
+  }
+
+  return [...seen.values()];
 }
 
 /**
@@ -126,25 +220,12 @@ export async function fetchModels(
         (model): model is OmniRouteModel =>
           model !== null && model !== undefined && typeof model.id === 'string',
       )
-      .map((model) => ({
-        ...model,
-        // Ensure required fields
-        id: model.id,
-        name: model.name || model.id,
-        description: model.description || `OmniRoute model: ${model.id}`,
-        // Keep undefined for enrichment to work properly
-        contextWindow: model.contextWindow,
-        maxTokens: model.maxTokens,
-        supportsStreaming: model.supportsStreaming,
-        supportsVision: model.supportsVision,
-        supportsTools: model.supportsTools,
-        supportsTemperature: model.supportsTemperature,
-        supportsReasoning: model.supportsReasoning,
-        supportsAttachment: model.supportsAttachment,
-      }));
+      .map(normalizeModel);
+
+    const dedupedModels = deduplicateModels(rawModels);
 
     // Enrich with models.dev and combo capabilities
-    const models = await enrichModelMetadata(rawModels, config);
+    const models = await enrichModelMetadata(dedupedModels, config);
 
     // Update cache
     modelCache.set(cacheKey, {
