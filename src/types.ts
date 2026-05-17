@@ -5,6 +5,8 @@ export interface OmniRouteModel {
   id: string;
   name: string;
   description?: string;
+
+  // OmniRoute native fields (camelCase from API)
   contextWindow?: number;
   maxTokens?: number;
   supportsStreaming?: boolean;
@@ -13,6 +15,28 @@ export interface OmniRouteModel {
   supportsTemperature?: boolean;
   supportsReasoning?: boolean;
   supportsAttachment?: boolean;
+
+  // OmniRoute native fields (snake_case from API)
+  context_length?: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+
+  // OmniRoute capabilities object
+  capabilities?: {
+    vision?: boolean;
+    tool_calling?: boolean;
+    reasoning?: boolean;
+    thinking?: boolean;
+    attachment?: boolean;
+    temperature?: boolean;
+  };
+
+  // Enriched fields from models.dev
+  temperature?: boolean;
+  reasoning?: boolean;
+  attachment?: boolean;
+  tool_call?: boolean;
+
   pricing?: {
     input?: number;
     output?: number;
