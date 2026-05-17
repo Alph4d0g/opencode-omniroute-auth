@@ -20,6 +20,8 @@ export interface OmniRouteModel {
   context_length?: number;
   max_input_tokens?: number;
   max_output_tokens?: number;
+  vision?: boolean;
+  tool_calling?: boolean;
 
   // OmniRoute capabilities object
   capabilities?: {
@@ -29,6 +31,7 @@ export interface OmniRouteModel {
     thinking?: boolean;
     attachment?: boolean;
     temperature?: boolean;
+    toolcall?: boolean;
   };
 
   // Enriched fields from models.dev

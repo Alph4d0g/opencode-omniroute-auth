@@ -101,6 +101,9 @@ function normalizeModel(model: OmniRouteModel): OmniRouteModel {
 /**
  * Deduplicate models by canonical provider+model key.
  * Prefers canonical-prefixed IDs over aliases.
+ * 
+ * NOTE: Only deduplicates known aliases (PROVIDER_ALIAS_TO_CANONICAL).
+ * Unknown provider prefixes are kept as-is to preserve user metadata.
  */
 function deduplicateModels(models: OmniRouteModel[]): OmniRouteModel[] {
   const seen = new Map<string, OmniRouteModel>();
@@ -114,8 +117,14 @@ function deduplicateModels(models: OmniRouteModel[]): OmniRouteModel[] {
     }
 
     const [providerPrefix, modelKey] = parts;
-    const canonicalPrefix =
-      PROVIDER_ALIAS_TO_CANONICAL[providerPrefix] || providerPrefix;
+    const canonicalPrefix = PROVIDER_ALIAS_TO_CANONICAL[providerPrefix];
+    
+    // Only deduplicate known aliases; preserve unknown prefixes as-is
+    if (!canonicalPrefix) {
+      seen.set(model.id, model);
+      continue;
+    }
+    
     const canonicalId = `${canonicalPrefix}/${modelKey}`;
 
     const existing = seen.get(canonicalId);
@@ -140,6 +149,28 @@ function deduplicateModels(models: OmniRouteModel[]): OmniRouteModel[] {
   }
 
   return [...seen.values()];
+}
+
+/**
+ * Reverse a provider alias to its canonical form for metadata lookups.
+ * Returns the original id if no alias mapping exists.
+ */
+export function resolveProviderAliasForMetadata(modelId: string): string {
+  const parts = modelId.split('/');
+  if (parts.length !== 2) return modelId;
+  
+  const [providerPrefix, modelKey] = parts;
+  const canonicalPrefix = PROVIDER_ALIAS_TO_CANONICAL[providerPrefix];
+  if (!canonicalPrefix) return modelId;
+  
+  return `${canonicalPrefix}/${modelKey}`;
+}
+
+/**
+ * Check if a provider prefix is a known alias.
+ */
+export function isProviderAlias(providerPrefix: string): boolean {
+  return providerPrefix in PROVIDER_ALIAS_TO_CANONICAL;
 }
 
 /**
