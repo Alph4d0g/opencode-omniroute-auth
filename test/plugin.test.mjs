@@ -546,10 +546,11 @@ test('config hook preserves user modelMetadata match blocks', async () => {
 
     const metadata = config.provider.omniroute.options.modelMetadata;
     assert.ok(Array.isArray(metadata));
-    assert.deepEqual(metadata.at(-1), userBlock);
-    // After deduplication, model ID is normalized to canonical form
-    assert.equal(metadata[0].match, 'codex/gpt-5.5');
-    assert.equal(metadata[0].contextWindow, 1050000);
+    // User config comes first in first-match-wins systems
+    assert.deepEqual(metadata[0], userBlock);
+    // Generated metadata follows user config
+    assert.equal(metadata[1].match, 'codex/gpt-5.5');
+    assert.equal(metadata[1].contextWindow, 1050000);
   } finally {
     await rm(tempHome, { recursive: true, force: true });
   }

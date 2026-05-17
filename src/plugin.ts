@@ -361,12 +361,23 @@ function mergeModelMetadata(
   const userConfig = getModelMetadataConfig({ modelMetadata: rawUserConfig });
 
   if (Array.isArray(userConfig)) {
+    // Validate user-provided metadata blocks to prevent issues in OpenCode framework
+    const validUserConfig = userConfig.filter((block) => {
+      const validation = isValidModelMetadata(block);
+      if (!validation.valid) {
+        warn(`Invalid metadata block for match "${sanitizeForLog(String(block.match))}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
+        return false;
+      }
+      return true;
+    });
+
     const generatedBlocks = Object.entries(generated).map(([id, metadata]) => ({
       match: id,
       ...metadata,
     }));
 
-    return [...generatedBlocks, ...userConfig];
+    // User config comes first so it takes precedence in first-match-wins systems
+    return [...validUserConfig, ...generatedBlocks];
   }
 
   if (userConfig && isRecord(userConfig)) {

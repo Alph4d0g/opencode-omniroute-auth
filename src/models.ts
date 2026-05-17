@@ -101,7 +101,7 @@ function normalizeModel(model: OmniRouteModel): OmniRouteModel {
 /**
  * Deduplicate models by canonical provider+model key.
  * Prefers canonical-prefixed IDs over aliases.
- * 
+ *
  * NOTE: Only deduplicates known aliases (PROVIDER_ALIAS_TO_CANONICAL).
  * Unknown provider prefixes are kept as-is to preserve user metadata.
  */
@@ -118,13 +118,15 @@ function deduplicateModels(models: OmniRouteModel[]): OmniRouteModel[] {
 
     const [providerPrefix, modelKey] = parts;
     const canonicalPrefix = PROVIDER_ALIAS_TO_CANONICAL[providerPrefix];
-    
+
     // Only deduplicate known aliases; preserve unknown prefixes as-is
     if (!canonicalPrefix) {
-      seen.set(model.id, model);
+      // Merge metadata if same unknown prefix seen again
+      const existing = seen.get(model.id);
+      seen.set(model.id, existing ? { ...existing, ...model } : model);
       continue;
     }
-    
+
     const canonicalId = `${canonicalPrefix}/${modelKey}`;
 
     const existing = seen.get(canonicalId);
@@ -135,16 +137,8 @@ function deduplicateModels(models: OmniRouteModel[]): OmniRouteModel[] {
         id: canonicalId,
       });
     } else {
-      // Already have canonical version - merge metadata, prefer non-alias
-      const isAlias = providerPrefix !== canonicalPrefix;
-      if (!isAlias) {
-        // This is the canonical version, overwrite alias
-        seen.set(canonicalId, {
-          ...model,
-          id: canonicalId,
-        });
-      }
-      // If alias and we already have canonical, drop it
+      // Merge alias metadata into existing, preferring existing (canonical) fields
+      seen.set(canonicalId, { ...model, ...existing, id: canonicalId });
     }
   }
 
