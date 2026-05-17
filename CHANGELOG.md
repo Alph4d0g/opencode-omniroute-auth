@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.0] - 2026-05-17
+
+### Added
+
+- **Comprehensive Model Metadata Normalization** — `normalizeModel()` now reads all OmniRoute field variants with proper precedence:
+  - camelCase fields (e.g., `contextWindow`, `supportsVision`)
+  - snake_case fields (e.g., `context_length`, `max_output_tokens`)
+  - capabilities object (e.g., `capabilities.vision`, `capabilities.tool_calling`)
+  - Precedence: camelCase > snake_case > capabilities object
+- **Provider Alias Deduplication** — Generic deduplication system that groups alias and canonical model entries:
+  - Added `PROVIDER_ALIAS_TO_CANONICAL` mapping for known aliases (`cx` → `codex`, `ollamacloud` → `ollama-cloud`, etc.)
+  - Added `deduplicateModels()` function that prefers canonical IDs and merges alias metadata
+  - Added `resolveProviderAliasForMetadata()` and `isProviderAlias()` helpers
+  - Only deduplicates known aliases; unknown provider prefixes are preserved as-is
+- **Model Capability Enrichment** — Extended `OmniRouteModel` interface with native OmniRoute fields:
+  - snake_case context limits: `context_length`, `max_input_tokens`, `max_output_tokens`
+  - Top-level capability flags: `vision`, `tool_calling`
+  - capabilities object: `vision`, `tool_calling`, `reasoning`, `thinking`, `attachment`, `temperature`
+- **Array-based Metadata Validation** — User-provided `modelMetadata` array blocks are now validated with warning logs for invalid entries
+- **4 New Test Cases** covering normalization precedence, snake_case field reading, and deduplication behavior
+
+### Changed
+
+- **Array Metadata Merge Precedence** — In array-based `modelMetadata`, user config now comes before generated blocks to ensure user overrides take precedence in first-match-wins systems
+- **Metadata Key Canonicalization** — User metadata with alias keys (e.g., `cx/gpt-5.5`) is merged into canonical keys (e.g., `codex/gpt-5.5`) to match deduplicated model IDs
+- **Unknown Prefix Handling** — Unknown provider prefixes now merge metadata instead of overwriting, preserving all available metadata
+
+### Fixed
+
+- **Dead Code Removal** — Eliminated unreachable `isAlias` check in deduplication logic
+- **Alias Metadata Loss** — Alias metadata is now merged into canonical entries instead of being dropped
+- **Review Feedback** — Addressed all gemini-code-assist review comments from PR #20:
+  - Fixed array-based metadata merge precedence (userConfig first)
+  - Added validation for array-based user metadata blocks
+  - Fixed metadata merging for unknown provider prefixes
+  - Simplified deduplication logic and merged alias metadata into canonical
+
 ## [1.1.4] - 2026-05-15
 
 ### Added

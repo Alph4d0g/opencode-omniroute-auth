@@ -10,9 +10,19 @@
 - ✅ **Provider Auto-Registration** - Registers an `omniroute` provider via plugin hooks
 - ✅ **Model Caching** - Intelligent caching with TTL for better performance
 - ✅ **Fallback Models** - Default models when API is unavailable
+- ✅ **Model Metadata Normalization** - Reads all OmniRoute field variants (camelCase, snake_case, capabilities object) with proper precedence
+- ✅ **Provider Alias Deduplication** - Automatically deduplicates alias/canonical model entries (e.g., `cx/gpt-5.5` → `codex/gpt-5.5`)
 - ✅ **Combo Model Capability Enrichment** - Automatically calculates lowest common capabilities for OmniRoute combo models
+- ✅ **models.dev Enrichment** - Enriches model metadata from models.dev API with provider alias resolution
+- ✅ **Subscription Provider Fallback** - Falls back to public providers for subscription-based models
+- ✅ **Model Variant Support** - Automatically strips reasoning effort suffixes (e.g., `gpt-5.5-xhigh` → `gpt-5.5`) for lookup
+- ✅ **Secure Logging** - Sanitized log output with async file I/O to prevent event loop blocking
 
 ## Installation
+
+```bash
+npm install opencode-omniroute-auth
+```
 
 ## Quick Start
 
@@ -276,6 +286,21 @@ interface OmniRouteModel {
   supportsStreaming?: boolean;
   supportsVision?: boolean;
   supportsTools?: boolean;
+  supportsTemperature?: boolean;
+  supportsReasoning?: boolean;
+  supportsAttachment?: boolean;
+  // OmniRoute native fields (normalized automatically)
+  context_length?: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  capabilities?: {
+    vision?: boolean;
+    tool_calling?: boolean;
+    reasoning?: boolean;
+    thinking?: boolean;
+    attachment?: boolean;
+    temperature?: boolean;
+  };
   pricing?: {
     input?: number;
     output?: number;
@@ -290,14 +315,14 @@ import {
   fetchModels,
   clearModelCache,
   refreshModels,
-  // New: Combo model utilities
+  // Combo model utilities
   clearComboCache,
   fetchComboData,
   resolveUnderlyingModels,
   calculateModelCapabilities,
 } from 'opencode-omniroute-auth/runtime';
 
-// Fetch models manually (with automatic enrichment)
+// Fetch models manually (with automatic normalization and enrichment)
 const models = await fetchModels(config, apiKey);
 
 // Clear model cache (also clears combo cache)
@@ -310,21 +335,6 @@ const freshModels = await refreshModels(config, apiKey);
 const combos = await fetchComboData(config);
 const underlyingModels = await resolveUnderlyingModels('Designer', config);
 const capabilities = await calculateModelCapabilities(model, config, modelsDevIndex);
-```
-import {
-  fetchModels,
-  clearModelCache,
-  refreshModels,
-} from 'opencode-omniroute-auth/runtime';
-
-// Fetch models manually
-const models = await fetchModels(config, apiKey);
-
-// Clear model cache
-clearModelCache();
-
-// Force refresh models
-const freshModels = await refreshModels(config, apiKey);
 ```
 
 ## Development
@@ -385,3 +395,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Support
 
 For support, please open an issue on GitHub or contact OmniRoute support.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Alph4d0g/opencode-omniroute-auth&type=Date)](https://star-history.com/#Alph4d0g/opencode-omniroute-auth&Date)
