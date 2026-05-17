@@ -1,0 +1,8 @@
+{
+  "plugins": [
+    {
+      "name": "opencode-omniroute-auth",
+      "path": "/Users/alpha/git/opencode-omniroute-auth"
+    }
+  ]
+}
