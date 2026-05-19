@@ -44,6 +44,8 @@ export interface OmniRouteModel {
     input?: number;
     output?: number;
   };
+
+  variants?: Record<string, OmniRouteModelVariant>;
 }
 
 export interface OmniRouteModelMetadata {
@@ -185,7 +187,7 @@ export interface OmniRouteProviderModel {
  * Model variant configuration
  */
 export interface OmniRouteModelVariant {
-  reasoningEffort?: 'low' | 'medium' | 'high';
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
   [key: string]: unknown;
 }
 

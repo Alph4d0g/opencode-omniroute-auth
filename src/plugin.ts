@@ -557,19 +557,22 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProvi
     options: {},
     headers: {},
     status: 'active',
-    variants: supportsReasoning
-      ? {
-          low: { reasoningEffort: 'low' },
-          medium: { reasoningEffort: 'medium' },
-          high: { reasoningEffort: 'high' },
-        }
-      : {},
+    variants: model.variants && Object.keys(model.variants).length > 0
+      ? model.variants
+      : supportsReasoning
+        ? {
+            low: { reasoningEffort: 'low' },
+            medium: { reasoningEffort: 'medium' },
+            high: { reasoningEffort: 'high' },
+          }
+        : {},
   };
 }
 
 function getModelFamily(modelId: string): string {
-  const [family] = modelId.split('-');
-  return family || modelId;
+  const withoutProvider = modelId.includes('/') ? modelId.split('/').pop()! : modelId;
+  const [family] = withoutProvider.split('-');
+  return family || withoutProvider;
 }
 
 /**
