@@ -97,6 +97,29 @@ interface FetchFailure {
   message: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isModelsDevData(value: unknown): value is ModelsDevData {
+  if (!isRecord(value)) return false;
+
+  const providers = Object.values(value);
+  if (providers.length === 0) return false;
+
+  for (const provider of providers) {
+    if (!isRecord(provider) || typeof provider.id !== 'string' || !isRecord(provider.models)) {
+      return false;
+    }
+
+    for (const model of Object.values(provider.models)) {
+      if (!isRecord(model)) return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Sleep helper for backoff delays
  */
@@ -164,17 +187,17 @@ async function fetchModelsDevOnce(
       };
     }
 
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    if (!isModelsDevData(data)) {
       const elapsedMs = Date.now() - start;
       return {
         class: 'invalid_structure',
         elapsedMs,
-        message: 'Response is not a valid object',
+        message: 'Response is not valid models.dev data',
       };
     }
 
     const elapsedMs = Date.now() - start;
-    return { data: data as ModelsDevData, elapsedMs };
+    return { data, elapsedMs };
   } catch (error) {
     const elapsedMs = Date.now() - start;
     if (error instanceof Error && error.name === 'AbortError') {
@@ -613,4 +636,3 @@ export function stripVariantSuffix(modelKey: string): { base: string; stripped: 
   }
   return { base: modelKey, stripped: false };
 }
-

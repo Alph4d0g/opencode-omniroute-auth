@@ -31,7 +31,7 @@
   1. **Categorizes** models into real bases and variants using `stripVariantSuffix()`
   2. **Builds result**: real bases pass through unchanged; for each base with variants, merges all variants under the base model with a `variants` Record
   3. **Synthetic bases**: when only variants are returned (no explicit base), creates a synthetic base from the first variant, copying all fields and setting `id`/`name` to the stripped base ID
-  4. **Metadata merging**: base inherits **max** `contextWindow` and **max** `maxTokens` across all variants; `supportsReasoning` becomes `true` if any variant has it
+  4. **Metadata merging**: base inherits **max** `contextWindow`, **max** `maxTokens`, and the union of supported capability flags across all variants
 - Integrated into `fetchModels()` pipeline: `normalizeModel` → `deduplicateModels` → `groupVariantModels` → `enrichModelMetadata` → `toProviderModels`
 - Fixed `toProviderModel()` in `src/plugin.ts` to prioritize pre-populated `model.variants` over generated `{low, medium, high}` defaults
 - Added `'xhigh'` to `OmniRouteModelVariant.reasoningEffort` type and generated variants
@@ -57,13 +57,16 @@
 - **Lockfile Sync** — `package-lock.json` version aligned with `package.json` (`1.2.1`).
 - **Test Suite Speed** — Eliminated real `setTimeout` sleeps from `test/models-dev.test.mjs` by using `cacheTtl: 0` for stale-cache tests. Reduces test runtime and improves scalability.
 - **Latency Documentation** — Explicit JSDoc added on `fetchModelsDevData()` documenting worst-case cold-start latency (~15.75s) as an accepted reliability trade-off.
+- **models.dev Structural Validation** — Fetched models.dev payloads now validate provider entries and nested `models` records before accepting data, preventing malformed upstream objects from entering cache/index paths.
+- **Variant Capability Union** — Grouped variants now merge `supportsVision`, `supportsTools`, `supportsStreaming`, `supportsTemperature`, and `supportsAttachment` into the base model when any variant advertises those capabilities.
 
 ### Testing
 
-- Added 8 focused tests in `test/models-dev.test.mjs` covering all retry, cache, and fallback paths.
+- Added 9 focused tests in `test/models-dev.test.mjs` covering all retry, cache, fallback, and malformed-provider validation paths.
+- Added 1 unit test in `test/models.test.mjs` covering capability union across grouped variants.
 - Added 2 regression tests in `test/plugin.test.mjs` for variant grouping and synthetic base model creation.
 - Added cache isolation (`clearModelCache()`, `clearModelsDevCache()`) to `test/plugin.test.mjs` `afterEach` to prevent cross-test contamination.
-- Full regression suite: 52/52 tests pass (0 failures).
+- Full regression suite: 54/54 tests pass (0 failures).
 
 ### Documentation
 
@@ -72,7 +75,7 @@
 ## Verification
 
 - `npm run prepublishOnly` passes (`clean`, `build`, `check:exports`).
-- `npm test` passes: 52 tests, 0 failures.
+- `npm test` passes: 54 tests, 0 failures.
 - TypeScript strict mode compiles cleanly.
 
 ## Upgrade Notes

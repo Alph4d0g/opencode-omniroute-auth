@@ -235,6 +235,27 @@ test('invalid response structure with stale cache - returns stale data', async (
   assert.equal(calls, 2, 'Should make 1 + 1 attempts (invalid structure is non-retryable)');
 });
 
+test('invalid provider structure with no cache - returns null', async () => {
+  let calls = 0;
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    if (url === MOCK_URL) {
+      calls++;
+      return new Response(JSON.stringify({ openai: { id: 'openai', models: null } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({}), { status: 200 });
+  };
+
+  const config = createConfig();
+
+  const result = await fetchModelsDevData(config);
+  assert.equal(result, null, 'Should return null for malformed provider entries');
+  assert.equal(calls, 1, 'Should not retry structurally invalid responses');
+});
+
 // Integration test: verify getModelsDevIndex uses the improved fetch pipeline
 test('getModelsDevIndex integrates with retry and cache', async () => {
   let calls = 0;

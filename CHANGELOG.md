@@ -14,7 +14,7 @@ All notable changes to this project are documented in this file.
   - Per-attempt structured logging: attempt number, failure class, HTTP status (when applicable), and elapsed duration.
   - Success logging: total elapsed duration and provider count for observability.
   - Timeout increase: default per-attempt timeout raised from 1000ms to 5000ms.
-- **8 New Test Cases** (`test/models-dev.test.mjs`) covering:
+- **9 New Test Cases** (`test/models-dev.test.mjs`) covering:
   - Fresh cache hit (no redundant network call)
   - Timeout recovery on retry
   - 503 retryable HTTP failure recovery
@@ -22,16 +22,18 @@ All notable changes to this project are documented in this file.
   - Null return on cold-start total failure
   - 404 fail-fast behavior (no unnecessary retries)
   - Invalid response structure with stale cache fallback
+  - Malformed provider entry rejection before cache update
   - End-to-end integration with `getModelsDevIndex()`
 - **Model Variant Support Fix** — Comprehensive fix for variant-suffixed models (e.g., `codex/gpt-5.5-xhigh`, `codex/gpt-5.5-high`):
   - Added `groupVariantModels()` in `src/models.ts` — pure two-pass algorithm that merges variant-suffixed models under their base model ID
   - Added `variants?: Record<string, OmniRouteModelVariant>` to `OmniRouteModel` interface in `src/types.ts`
   - Extended `OmniRouteModelVariant.reasoningEffort` to include `'xhigh'` (was `'low' | 'medium' | 'high'`)
-  - Synthetic base model creation: when only variants are returned (no explicit base), creates a synthetic base from the first variant with merged metadata (max `contextWindow`, max `maxTokens`)
+  - Synthetic base model creation: when only variants are returned (no explicit base), creates a synthetic base from the first variant with merged metadata (max `contextWindow`, max `maxTokens`, unioned capability flags)
   - Pipeline integration: `fetchModels()` now flows `normalizeModel` → `deduplicateModels` → `groupVariantModels` → `enrichModelMetadata` → `toProviderModels`
   - `toProviderModel()` in `src/plugin.ts` now prioritizes pre-populated `model.variants` over generated `{low, medium, high}` defaults
 - **Test Cache Isolation** (`test/plugin.test.mjs`) — Added `clearModelCache()` and `clearModelsDevCache()` to `afterEach` to prevent cross-test contamination from mutable in-memory caches
 - **2 New Regression Tests** (`test/plugin.test.mjs`) covering variant grouping and synthetic base model creation
+- **1 New Regression Test** (`test/models.test.mjs`) covering capability union across grouped variants
 
 ### Fixed
 
@@ -53,6 +55,8 @@ All notable changes to this project are documented in this file.
 - **Lockfile Version Sync** — Updated `package-lock.json` version from `1.2.0` to `1.2.1` to match `package.json`. (`package-lock.json`)
 - **Test Suite Speed** — Eliminated real `setTimeout` sleeps from `test/models-dev.test.mjs` by using `cacheTtl: 0` to mark cache immediately stale instead of waiting for TTL expiry. Reduces test runtime and improves scalability.
 - **Latency Documentation** — Added explicit JSDoc on `fetchModelsDevData()` documenting worst-case cold-start latency (~15.75s) as an accepted reliability trade-off per design spec. (`src/models-dev.ts`)
+- **models.dev Structural Validation** — Added runtime validation for provider entries and nested `models` records before accepting fetched models.dev data. Prevents malformed upstream objects from being cached or indexed. (`src/models-dev.ts`)
+- **Variant Capability Union** — Grouped variant models now merge `supportsVision`, `supportsTools`, `supportsStreaming`, `supportsTemperature`, and `supportsAttachment` into the base model when any variant supports them. (`src/models.ts`)
 
 ## [1.2.0] - 2026-05-17
 

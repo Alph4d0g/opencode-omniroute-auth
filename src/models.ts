@@ -223,7 +223,7 @@ export function groupVariantModels(models: OmniRouteModel[]): OmniRouteModel[] {
     }
     merged.variants = variantsRecord;
 
-    // Merge metadata from all variants into base: use max contextWindow and max maxTokens
+    // Merge metadata from all variants into base: use max limits and union capabilities.
     for (const { model } of variants) {
       if (model.contextWindow !== undefined) {
         merged.contextWindow = Math.max(merged.contextWindow ?? 0, model.contextWindow);
@@ -233,6 +233,21 @@ export function groupVariantModels(models: OmniRouteModel[]): OmniRouteModel[] {
       }
       if (model.supportsReasoning) {
         merged.supportsReasoning = true;
+      }
+      if (model.supportsVision) {
+        merged.supportsVision = true;
+      }
+      if (model.supportsTools) {
+        merged.supportsTools = true;
+      }
+      if (model.supportsStreaming) {
+        merged.supportsStreaming = true;
+      }
+      if (model.supportsTemperature) {
+        merged.supportsTemperature = true;
+      }
+      if (model.supportsAttachment) {
+        merged.supportsAttachment = true;
       }
     }
 
@@ -537,5 +552,4 @@ function lookupModelsDevModel(
 
   return undefined;
 }
-
 
