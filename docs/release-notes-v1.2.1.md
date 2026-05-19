@@ -1,4 +1,4 @@
-# Release v1.4.1
+# Release v1.2.1
 
 ## Highlights
 
@@ -54,7 +54,7 @@
 
 - **Cache Isolation** — `modelsDevCache` is now keyed by URL (`Map<string, ModelsDevCache>`) to prevent cross-config data leakage when different configs specify different `modelsDev.url` values.
 - **JSDoc Accuracy** — `OmniRouteModelsDevConfig.timeoutMs` JSDoc updated to reflect the new `5000ms` default.
-- **Lockfile Sync** — `package-lock.json` version aligned with `package.json` (`1.4.1`).
+- **Lockfile Sync** — `package-lock.json` version aligned with `package.json` (`1.2.1`).
 - **Test Suite Speed** — Eliminated real `setTimeout` sleeps from `test/models-dev.test.mjs` by using `cacheTtl: 0` for stale-cache tests. Reduces test runtime and improves scalability.
 - **Latency Documentation** — Explicit JSDoc added on `fetchModelsDevData()` documenting worst-case cold-start latency (~15.75s) as an accepted reliability trade-off.
 

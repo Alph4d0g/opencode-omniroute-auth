@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.4.1] - 2026-05-19
+## [1.2.1] - 2026-05-19
 
 ### Added
 
@@ -50,7 +50,7 @@ All notable changes to this project are documented in this file.
 
 - **Cache Isolation** — `modelsDevCache` is now keyed by URL (`Map<string, ModelsDevCache>`) instead of a single global variable. Prevents cross-config data leakage when different configs specify different `modelsDev.url` values. (`src/models-dev.ts`)
 - **JSDoc Accuracy** — Updated `OmniRouteModelsDevConfig.timeoutMs` JSDoc comment from `(default: 1000ms)` to `(default: 5000ms)` to match the actual constant. (`src/types.ts`)
-- **Lockfile Version Sync** — Updated `package-lock.json` version from `1.2.0` to `1.4.1` to match `package.json`. (`package-lock.json`)
+- **Lockfile Version Sync** — Updated `package-lock.json` version from `1.2.0` to `1.2.1` to match `package.json`. (`package-lock.json`)
 - **Test Suite Speed** — Eliminated real `setTimeout` sleeps from `test/models-dev.test.mjs` by using `cacheTtl: 0` to mark cache immediately stale instead of waiting for TTL expiry. Reduces test runtime and improves scalability.
 - **Latency Documentation** — Added explicit JSDoc on `fetchModelsDevData()` documenting worst-case cold-start latency (~15.75s) as an accepted reliability trade-off per design spec. (`src/models-dev.ts`)
 
