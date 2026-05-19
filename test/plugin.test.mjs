@@ -5,6 +5,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 import OmniRouteAuthPlugin from '../dist/index.js';
+import { clearModelCache } from '../dist/runtime.js';
+import { clearModelsDevCache } from '../dist/src/models-dev.js';
 
 const ORIGINAL_FETCH = global.fetch;
 const ORIGINAL_HOME = process.env.HOME;
@@ -12,6 +14,8 @@ const ORIGINAL_HOME = process.env.HOME;
 afterEach(() => {
   global.fetch = ORIGINAL_FETCH;
   process.env.HOME = ORIGINAL_HOME;
+  clearModelCache();
+  clearModelsDevCache();
 });
 
 function getDummyBaseUrl(port = 20128) {
@@ -610,4 +614,120 @@ test('config hook respects explicit attachment false for vision models', async (
   } finally {
     await rm(tempHome, { recursive: true, force: true });
   }
+});
+
+test('provider hook groups variant models under base model', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'codex/gpt-5.5',
+              name: 'GPT-5.5',
+              supportsReasoning: true,
+            },
+            {
+              id: 'codex/gpt-5.5-high',
+              name: 'GPT-5.5 High',
+              supportsReasoning: true,
+            },
+            {
+              id: 'codex/gpt-5.5-xhigh',
+              name: 'GPT-5.5 XHigh',
+              supportsReasoning: true,
+              contextWindow: 256000,
+            },
+            {
+              id: 'openai/gpt-4o',
+              name: 'GPT-4o',
+              supportsReasoning: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  assert.ok(result['codex/gpt-5.5']);
+  assert.ok(result['codex/gpt-5.5'].variants.high);
+  assert.ok(result['codex/gpt-5.5'].variants.xhigh);
+  assert.equal(result['codex/gpt-5.5-high'], undefined);
+  assert.equal(result['codex/gpt-5.5-xhigh'], undefined);
+  assert.ok(result['openai/gpt-4o']);
+  assert.equal(Object.keys(result['openai/gpt-4o'].variants).length, 0);
+});
+
+test('provider hook creates synthetic base model when only variants are returned', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'codex/gpt-5.5-high',
+              name: 'GPT-5.5 High',
+              contextWindow: 128000,
+              supportsReasoning: true,
+            },
+            {
+              id: 'codex/gpt-5.5-xhigh',
+              name: 'GPT-5.5 XHigh',
+              contextWindow: 256000,
+              supportsReasoning: true,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  assert.ok(result['codex/gpt-5.5']);
+  assert.ok(result['codex/gpt-5.5'].variants.high);
+  assert.ok(result['codex/gpt-5.5'].variants.xhigh);
+  assert.equal(result['codex/gpt-5.5'].limit.context, 256000);
+  assert.equal(result['codex/gpt-5.5-high'], undefined);
+  assert.equal(result['codex/gpt-5.5-xhigh'], undefined);
 });
