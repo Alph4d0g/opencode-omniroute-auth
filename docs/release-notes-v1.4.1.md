@@ -67,7 +67,7 @@
 
 ### Documentation
 
-- Added design spec for models.dev reliability pipeline.
+- Internal `docs/superpowers/` planning/spec artifacts are kept local only and are excluded from the GitHub repository.
 
 ## Verification
 
