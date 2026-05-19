@@ -2,6 +2,7 @@
 
 ## Highlights
 
+- **Model Variant Support Fix** — Variant-suffixed models (e.g., `codex/gpt-5.5-xhigh`, `codex/gpt-5.5-high`) are now grouped under their base model ID instead of appearing as duplicate top-level entries. Includes synthetic base model creation, `xhigh` variant support, and `getModelFamily()` fix for provider-prefixed versioned models.
 - **models.dev enrichment no longer fails on transient network slowness.** The fetch pipeline now retries up to 3 times with exponential backoff and falls back to stale cached data if live refresh fails.
 - **Default context limit corrected** from 4096 to 128000 tokens to match OmniRoute API behavior.
 - **Structured observability** for enrichment failures with per-attempt diagnostics and fallback decisions.
@@ -21,9 +22,33 @@
 - Timeout budget increased from 1000ms to 5000ms per attempt.
 - Failure classification: `timeout`, `network`, `http_retryable`, `http_non_retryable`, `parse`, `invalid_structure`.
 
+### Model Variant Support Fix
+
+**Problem:** When OmniRoute lists variant-suffixed models separately (e.g., `codex/gpt-5.5-xhigh`, `codex/gpt-5.5-high`), each variant appeared as an independent top-level entry with incorrect generated variants (`{low, medium, high}`), causing duplicate/confusing model entries in OpenCode's model picker.
+
+**Solution:**
+- Added `groupVariantModels()` in `src/models.ts` — a pure two-pass algorithm that:
+  1. **Categorizes** models into real bases and variants using `stripVariantSuffix()`
+  2. **Builds result**: real bases pass through unchanged; for each base with variants, merges all variants under the base model with a `variants` Record
+  3. **Synthetic bases**: when only variants are returned (no explicit base), creates a synthetic base from the first variant, copying all fields and setting `id`/`name` to the stripped base ID
+  4. **Metadata merging**: base inherits **max** `contextWindow` and **max** `maxTokens` across all variants; `supportsReasoning` becomes `true` if any variant has it
+- Integrated into `fetchModels()` pipeline: `normalizeModel` → `deduplicateModels` → `groupVariantModels` → `enrichModelMetadata` → `toProviderModels`
+- Fixed `toProviderModel()` in `src/plugin.ts` to prioritize pre-populated `model.variants` over generated `{low, medium, high}` defaults
+- Added `'xhigh'` to `OmniRouteModelVariant.reasoningEffort` type and generated variants
+
+**Edge Cases Handled:**
+| Scenario | Behavior |
+|----------|----------|
+| Only variants returned, no base model | Creates synthetic base from first variant |
+| Base model + variants both returned | Uses real base; merges variant metadata (max limits) |
+| Non-reasoning suffix (e.g., `-preview`) | `stripVariantSuffix()` ignores it; no grouping |
+| Mixed provider prefixes post-dedup | Grouping operates on canonical IDs |
+| Variant without `supportsReasoning=true` | Still grouped; base becomes `true` if any variant has it |
+
 ### Fixes
 
 - `DEFAULT_CONTEXT_LIMIT` corrected from `4096` to `128000`.
+- **`getModelFamily()` for Provider-Prefixed Models** — Fixed incorrect family extraction for versioned models with provider prefixes. `getModelFamily('codex/gpt-5.5-xhigh')` now correctly returns `'gpt'` (was `'codex/gpt'`).
 
 ### Code Review Fixes
 
@@ -36,16 +61,19 @@
 ### Testing
 
 - Added 8 focused tests in `test/models-dev.test.mjs` covering all retry, cache, and fallback paths.
-- Full regression suite: 50/50 tests pass (0 failures).
+- Added 2 regression tests in `test/plugin.test.mjs` for variant grouping and synthetic base model creation.
+- Added cache isolation (`clearModelCache()`, `clearModelsDevCache()`) to `test/plugin.test.mjs` `afterEach` to prevent cross-test contamination.
+- Full regression suite: 52/52 tests pass (0 failures).
 
 ### Documentation
 
 - Added design spec: `docs/superpowers/specs/2026-05-18-models-dev-reliability-design.md`.
+- Added design spec: `docs/superpowers/specs/2026-05-19-model-variant-support-fix-design.md`.
 
 ## Verification
 
 - `npm run prepublishOnly` passes (`clean`, `build`, `check:exports`).
-- `npm test` passes: 50 tests, 0 failures.
+- `npm test` passes: 52 tests, 0 failures.
 - TypeScript strict mode compiles cleanly.
 
 ## Upgrade Notes

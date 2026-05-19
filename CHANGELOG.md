@@ -23,10 +23,20 @@ All notable changes to this project are documented in this file.
   - 404 fail-fast behavior (no unnecessary retries)
   - Invalid response structure with stale cache fallback
   - End-to-end integration with `getModelsDevIndex()`
+- **Model Variant Support Fix** — Comprehensive fix for variant-suffixed models (e.g., `codex/gpt-5.5-xhigh`, `codex/gpt-5.5-high`):
+  - Added `groupVariantModels()` in `src/models.ts` — pure two-pass algorithm that merges variant-suffixed models under their base model ID
+  - Added `variants?: Record<string, OmniRouteModelVariant>` to `OmniRouteModel` interface in `src/types.ts`
+  - Extended `OmniRouteModelVariant.reasoningEffort` to include `'xhigh'` (was `'low' | 'medium' | 'high'`)
+  - Synthetic base model creation: when only variants are returned (no explicit base), creates a synthetic base from the first variant with merged metadata (max `contextWindow`, max `maxTokens`)
+  - Pipeline integration: `fetchModels()` now flows `normalizeModel` → `deduplicateModels` → `groupVariantModels` → `enrichModelMetadata` → `toProviderModels`
+  - `toProviderModel()` in `src/plugin.ts` now prioritizes pre-populated `model.variants` over generated `{low, medium, high}` defaults
+- **Test Cache Isolation** (`test/plugin.test.mjs`) — Added `clearModelCache()` and `clearModelsDevCache()` to `afterEach` to prevent cross-test contamination from mutable in-memory caches
+- **2 New Regression Tests** (`test/plugin.test.mjs`) covering variant grouping and synthetic base model creation
 
 ### Fixed
 
 - **Default Context Limit** — `DEFAULT_CONTEXT_LIMIT` corrected from `4096` to `128000` to match actual OmniRoute API defaults.
+- **getModelFamily() for Provider-Prefixed Models** — Fixed incorrect family extraction for versioned models with provider prefixes. Before: `getModelFamily('codex/gpt-5.5-xhigh')` → `'codex/gpt'`. After: → `'gpt'`. Implementation now strips provider prefix before splitting on `-`.
 
 ### Changed
 
