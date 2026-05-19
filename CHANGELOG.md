@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.1] - 2026-05-19
+
+### Added
+
+- **models.dev Reliability Pipeline** — Complete rewrite of `fetchModelsDevData()` with production-grade resilience:
+  - Bounded retry loop (max 3 attempts) with exponential backoff (250ms, 500ms).
+  - Structured failure classification into 6 categories: `timeout`, `network`, `http_retryable`, `http_non_retryable`, `parse`, `invalid_structure`.
+  - Stale in-memory cache fallback: if live refresh fails, previously cached enrichment data is returned instead of skipping enrichment entirely.
+  - Fail-open cold-start behavior: returns `null` only when no cache exists and all attempts fail, preserving plugin functionality.
+  - Per-attempt structured logging: attempt number, failure class, HTTP status (when applicable), and elapsed duration.
+  - Success logging: total elapsed duration and provider count for observability.
+  - Timeout increase: default per-attempt timeout raised from 1000ms to 5000ms.
+- **8 New Test Cases** (`test/models-dev.test.mjs`) covering:
+  - Fresh cache hit (no redundant network call)
+  - Timeout recovery on retry
+  - 503 retryable HTTP failure recovery
+  - Stale cache fallback when all refresh attempts fail
+  - Null return on cold-start total failure
+  - 404 fail-fast behavior (no unnecessary retries)
+  - Invalid response structure with stale cache fallback
+  - End-to-end integration with `getModelsDevIndex()`
+
+### Fixed
+
+- **Default Context Limit** — `DEFAULT_CONTEXT_LIMIT` corrected from `4096` to `128000` to match actual OmniRoute API defaults.
+
+### Changed
+
+- **Internal Helpers** — Extracted `fetchModelsDevOnce()`, `shouldRetryModelsDevFailure()`, and `sleep()` helpers in `src/models-dev.ts` to keep retry logic isolated from lookup/index logic.
+
+### Removed
+
+- **Test Config Artifacts** — Removed `.opencode/config.json` and `.opencode/opencode.json` files that were committed accidentally.
+
 ## [1.2.0] - 2026-05-17
 
 ### Added
