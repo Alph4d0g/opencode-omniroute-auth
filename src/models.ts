@@ -212,14 +212,13 @@ export function groupVariantModels(models: OmniRouteModel[]): OmniRouteModel[] {
     // Build variants Record
     const variantsRecord: Record<string, OmniRouteModelVariant> = {};
     for (const { suffix } of variants) {
-      const lowerSuffix = suffix.toLowerCase();
       if (
-        lowerSuffix === 'low' ||
-        lowerSuffix === 'medium' ||
-        lowerSuffix === 'high' ||
-        lowerSuffix === 'xhigh'
+        suffix === 'low' ||
+        suffix === 'medium' ||
+        suffix === 'high' ||
+        suffix === 'xhigh'
       ) {
-        variantsRecord[suffix] = { reasoningEffort: lowerSuffix };
+        variantsRecord[suffix] = { reasoningEffort: suffix };
       }
     }
     merged.variants = variantsRecord;

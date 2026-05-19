@@ -67,8 +67,7 @@
 
 ### Documentation
 
-- Added design spec: `docs/superpowers/specs/2026-05-18-models-dev-reliability-design.md`.
-- Added design spec: `docs/superpowers/specs/2026-05-19-model-variant-support-fix-design.md`.
+- Added design spec for models.dev reliability pipeline.
 
 ## Verification
 
