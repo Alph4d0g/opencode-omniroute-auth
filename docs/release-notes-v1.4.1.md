@@ -25,6 +25,14 @@
 
 - `DEFAULT_CONTEXT_LIMIT` corrected from `4096` to `128000`.
 
+### Code Review Fixes
+
+- **Cache Isolation** — `modelsDevCache` is now keyed by URL (`Map<string, ModelsDevCache>`) to prevent cross-config data leakage when different configs specify different `modelsDev.url` values.
+- **JSDoc Accuracy** — `OmniRouteModelsDevConfig.timeoutMs` JSDoc updated to reflect the new `5000ms` default.
+- **Lockfile Sync** — `package-lock.json` version aligned with `package.json` (`1.4.1`).
+- **Test Suite Speed** — Eliminated real `setTimeout` sleeps from `test/models-dev.test.mjs` by using `cacheTtl: 0` for stale-cache tests. Reduces test runtime and improves scalability.
+- **Latency Documentation** — Explicit JSDoc added on `fetchModelsDevData()` documenting worst-case cold-start latency (~15.75s) as an accepted reliability trade-off.
+
 ### Testing
 
 - Added 8 focused tests in `test/models-dev.test.mjs` covering all retry, cache, and fallback paths.

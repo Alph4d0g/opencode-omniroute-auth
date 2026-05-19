@@ -146,15 +146,12 @@ test('all attempts fail with stale cache available - returns stale data', async 
     return new Response(JSON.stringify({}), { status: 200 });
   };
 
-  const config = createConfig({ cacheTtl: 1 }); // 1ms TTL
+  const config = createConfig({ cacheTtl: 0 }); // 0ms TTL — cache is immediately stale
 
   // Seed cache
   const first = await fetchModelsDevData(config);
   assert.ok(first, 'First fetch should succeed');
   assert.equal(calls, 1, 'Should make 1 call to seed cache');
-
-  // Wait for cache to expire
-  await new Promise((resolve) => setTimeout(resolve, 10));
 
   // All refresh attempts fail, should return stale cache
   const second = await fetchModelsDevData(config);
@@ -224,15 +221,12 @@ test('invalid response structure with stale cache - returns stale data', async (
     return new Response(JSON.stringify({}), { status: 200 });
   };
 
-  const config = createConfig({ cacheTtl: 1 }); // 1ms TTL
+  const config = createConfig({ cacheTtl: 0 }); // 0ms TTL — cache is immediately stale
 
   // Seed cache
   const first = await fetchModelsDevData(config);
   assert.ok(first, 'First fetch should succeed');
   assert.equal(calls, 1, 'Should make 1 call to seed cache');
-
-  // Wait for cache to expire
-  await new Promise((resolve) => setTimeout(resolve, 10));
 
   // Refresh returns invalid structure, should fall back to stale cache
   const second = await fetchModelsDevData(config);

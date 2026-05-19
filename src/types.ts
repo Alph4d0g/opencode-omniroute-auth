@@ -86,7 +86,7 @@ export interface OmniRouteModelsDevConfig {
   url?: string;
   /** Cache TTL in milliseconds (default: 24 hours) */
   cacheTtl?: number;
-  /** Fetch timeout in milliseconds (default: 1000ms) */
+  /** Fetch timeout in milliseconds (default: 5000ms) */
   timeoutMs?: number;
   /**
    * Optional alias mapping from OmniRoute provider keys (e.g. `cx`) to models.dev providers (e.g. `openai`).

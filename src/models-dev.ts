@@ -76,8 +76,8 @@ interface ModelsDevCache {
   timestamp: number;
 }
 
-// In-memory cache for models.dev data
-let modelsDevCache: ModelsDevCache | null = null;
+// In-memory cache for models.dev data, keyed by URL to prevent cross-config leakage
+const modelsDevCacheMap = new Map<string, ModelsDevCache>();
 
 /**
  * Failure classification for models.dev fetch attempts
@@ -195,7 +195,11 @@ async function fetchModelsDevOnce(
 }
 
 /**
- * Fetch models.dev data with caching, retries, and stale fallback
+ * Fetch models.dev data with caching, retries, and stale fallback.
+ *
+ * Worst-case cold-start latency when upstream is unavailable:
+ * 3 attempts × 5000ms timeout + 250ms + 500ms backoff ≈ 15.75s.
+ * This is an accepted trade-off for reliability per design spec.
  */
 export async function fetchModelsDevData(
   config?: OmniRouteConfig,
@@ -204,13 +208,15 @@ export async function fetchModelsDevData(
   const timeoutMs = config?.modelsDev?.timeoutMs ?? MODELS_DEV_TIMEOUT_MS;
   const cacheTtl = config?.modelsDev?.cacheTtl ?? MODELS_DEV_CACHE_TTL;
 
+  const cached = modelsDevCacheMap.get(url);
+
   // Check fresh cache first
-  if (modelsDevCache && Date.now() - modelsDevCache.timestamp < cacheTtl) {
-    debug('Using cached models.dev data');
-    return modelsDevCache.data;
+  if (cached && Date.now() - cached.timestamp < cacheTtl) {
+    debug(`Using cached models.dev data for ${url}`);
+    return cached.data;
   }
 
-  const staleCache = modelsDevCache;
+  const staleCache = cached ?? null;
   const overallStart = Date.now();
 
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -218,10 +224,10 @@ export async function fetchModelsDevData(
 
     if ('data' in result) {
       // Success: update cache and return
-      modelsDevCache = {
+      modelsDevCacheMap.set(url, {
         data: result.data,
         timestamp: Date.now(),
-      };
+      });
       const totalElapsed = Date.now() - overallStart;
       const providerCount = Object.keys(result.data).length;
       debug(
@@ -331,7 +337,7 @@ export async function getModelsDevIndex(
  * Clear the models.dev cache
  */
 export function clearModelsDevCache(): void {
-  modelsDevCache = null;
+  modelsDevCacheMap.clear();
   debug('models.dev cache cleared');
 }
 
