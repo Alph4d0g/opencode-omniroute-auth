@@ -468,6 +468,49 @@ test('provider hook applies array literal alias block to canonical fetched model
   assert.equal(result['codex/gpt-5.5'].limit.context, 512000);
 });
 
+test('provider hook treats string metadata match as a literal model id', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', contextWindow: 8192 },
+            { id: 'gpt-4x1-mini', name: 'GPT-4x1 Mini', contextWindow: 4096 },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: getDummyBaseUrl(20142),
+        apiMode: 'chat',
+        modelMetadata: [{ match: 'gpt-4.1-mini', contextWindow: 12345 }],
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'live-key' } },
+  );
+
+  assert.equal(result['gpt-4.1-mini'].limit.context, 12345);
+  assert.equal(result['gpt-4x1-mini'].limit.context, 4096);
+});
+
 test('provider hook addIfMissing array block creates canonical missing model', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 
@@ -1039,7 +1082,7 @@ test('config hook preserves user modelMetadata match blocks', async () => {
     };
 
     const userBlock = {
-      match: '^(codex|cx)/.*gpt-5',
+      match: /^(codex|cx)\/.*gpt-5/,
       contextWindow: 258000,
     };
     const plugin = await OmniRouteAuthPlugin({});
@@ -1059,7 +1102,8 @@ test('config hook preserves user modelMetadata match blocks', async () => {
     const metadata = config.provider.omniroute.options.modelMetadata;
     assert.ok(Array.isArray(metadata));
     // User config comes first in first-match-wins systems
-    assert.deepEqual(metadata[0], userBlock);
+    assert.equal(metadata[0].match, userBlock.match);
+    assert.equal(metadata[0].contextWindow, 258000);
     // Generated metadata follows user config
     assert.equal(metadata[1].match, 'codex/gpt-5.5');
     assert.equal(metadata[1].contextWindow, 1050000);

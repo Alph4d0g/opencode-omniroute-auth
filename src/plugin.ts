@@ -542,7 +542,6 @@ function applyModelMetadataOverrides(
     const missingModels: OmniRouteModel[] = [];
     for (const block of validBlocks) {
       if (block.addIfMissing !== true || typeof block.match !== 'string') continue;
-      if (!isConcreteModelIdMatch(block.match)) continue;
 
       const id = resolveProviderAliasForMetadata(block.match);
       const alreadyExists = existingModels.some((model) =>
@@ -594,9 +593,7 @@ function metadataBlockMatches(match: unknown, modelId: string, canonicalId: stri
       match === modelId ||
       match === canonicalId ||
       canonicalMatch === modelId ||
-      canonicalMatch === canonicalId ||
-      metadataMatcherMatches(match, modelId) ||
-      metadataMatcherMatches(match, canonicalId)
+      canonicalMatch === canonicalId
     );
   }
 
@@ -604,24 +601,10 @@ function metadataBlockMatches(match: unknown, modelId: string, canonicalId: stri
 }
 
 function metadataMatcherMatches(match: unknown, modelId: string): boolean {
-  if (typeof match === 'string') {
-    if (match === modelId) return true;
-
-    try {
-      return new RegExp(match).test(modelId);
-    } catch {
-      return false;
-    }
-  }
-
   const regexp = coerceRegExp(match);
   if (!regexp) return false;
   regexp.lastIndex = 0;
   return regexp.test(modelId);
-}
-
-function isConcreteModelIdMatch(match: string): boolean {
-  return !/[\\^$*+?()[\]{}|]/u.test(match);
 }
 
 function extractModelMetadata(value: OmniRouteModelMetadata): OmniRouteModelMetadata {
