@@ -8,11 +8,21 @@ import OmniRouteAuthPlugin from '../dist/index.js';
 
 const ORIGINAL_FETCH = global.fetch;
 const ORIGINAL_HOME = process.env.HOME;
+const ORIGINAL_XDG_DATA_HOME = process.env.XDG_DATA_HOME;
 
 afterEach(() => {
   global.fetch = ORIGINAL_FETCH;
-  process.env.HOME = ORIGINAL_HOME;
+  restoreEnv('HOME', ORIGINAL_HOME);
+  restoreEnv('XDG_DATA_HOME', ORIGINAL_XDG_DATA_HOME);
 });
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
 
 function getDummyBaseUrl(port = 20128) {
   return `http://localhost:${port}/v1`;
@@ -28,6 +38,16 @@ function createModelsResponse() {
       },
     ],
   };
+}
+
+async function createTempAuthHome(auth = { omniroute: { type: 'api', key: 'test-key' } }) {
+  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}-${Math.random()}`);
+  const dataHome = join(tempHome, '.local', 'share');
+  await mkdir(join(dataHome, 'opencode'), { recursive: true });
+  await writeFile(join(dataHome, 'opencode', 'auth.json'), JSON.stringify(auth));
+  process.env.HOME = tempHome;
+  process.env.XDG_DATA_HOME = dataHome;
+  return tempHome;
 }
 
 test('config hook applies defaults and normalized apiMode', async () => {
@@ -497,14 +517,8 @@ test('provider hook addIfMissing array block creates canonical missing model', a
 });
 
 test('provider hook ignores generated modelMetadata from config hook', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     let modelContextWindow = 1050000;
     global.fetch = async (input) => {
@@ -563,14 +577,8 @@ test('provider hook ignores generated modelMetadata from config hook', async () 
 });
 
 test('provider hook uses raw user modelMetadata after config hook generated metadata', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     let modelContextWindow = 1050000;
     global.fetch = async (input) => {
@@ -636,14 +644,8 @@ test('provider hook uses raw user modelMetadata after config hook generated meta
 });
 
 test('provider hook uses RegExp raw modelMetadata after config hook JSON clone', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     let modelContextWindow = 1050000;
     global.fetch = async (input) => {
@@ -698,14 +700,8 @@ test('provider hook uses RegExp raw modelMetadata after config hook JSON clone',
 });
 
 test('auth loader uses raw user modelMetadata after config hook generated metadata', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     let modelContextWindow = 1050000;
     global.fetch = async (input) => {
@@ -823,16 +819,8 @@ test('provider hook returns defaults when fetch fails (fetchModels handles error
 });
 
 test('config hook eagerly fetches models when auth is available', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({
-        omniroute: { type: 'api', key: 'test-key' },
-      }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -873,14 +861,8 @@ test('config hook eagerly fetches models when auth is available', async () => {
 });
 
 test('config hook refreshes plugin-generated models on second run', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     let modelContextWindow = 1050000;
     global.fetch = async (input) => {
@@ -928,14 +910,8 @@ test('config hook refreshes plugin-generated models on second run', async () => 
 });
 
 test('config hook preserves explicit user provider models', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -984,14 +960,8 @@ test('config hook preserves explicit user provider models', async () => {
 });
 
 test('config hook preserves user modelMetadata object overrides', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -1048,14 +1018,8 @@ test('config hook preserves user modelMetadata object overrides', async () => {
 });
 
 test('config hook preserves user modelMetadata match blocks', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -1106,14 +1070,8 @@ test('config hook preserves user modelMetadata match blocks', async () => {
 });
 
 test('config hook respects explicit attachment false for vision models', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
