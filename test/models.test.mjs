@@ -9,6 +9,7 @@ import {
   refreshModels,
 } from '../dist/runtime.js';
 import { calculateLowestCommonCapabilities } from '../dist/src/models-dev.js';
+import { groupVariantModels } from '../dist/src/models.js';
 
 const ORIGINAL_FETCH = global.fetch;
 
@@ -247,6 +248,39 @@ test('subscription provider fallback enriches from public provider', async () =>
 
   // Test unknown provider returns null
   assert.equal(getSubscriptionFallback('unknown-provider'), null);
+});
+
+test('groupVariantModels merges capability flags from all variants into synthetic base', () => {
+  const [model] = groupVariantModels([
+    {
+      id: 'codex/gpt-5.5-high',
+      name: 'GPT-5.5 High',
+      contextWindow: 128000,
+      maxTokens: 32000,
+      supportsReasoning: true,
+    },
+    {
+      id: 'codex/gpt-5.5-xhigh',
+      name: 'GPT-5.5 XHigh',
+      contextWindow: 256000,
+      maxTokens: 64000,
+      supportsVision: true,
+      supportsTools: true,
+      supportsStreaming: true,
+      supportsTemperature: true,
+      supportsAttachment: true,
+    },
+  ]);
+
+  assert.equal(model.id, 'codex/gpt-5.5');
+  assert.equal(model.contextWindow, 256000);
+  assert.equal(model.maxTokens, 64000);
+  assert.equal(model.supportsReasoning, true);
+  assert.equal(model.supportsVision, true);
+  assert.equal(model.supportsTools, true);
+  assert.equal(model.supportsStreaming, true);
+  assert.equal(model.supportsTemperature, true);
+  assert.equal(model.supportsAttachment, true);
 });
 
 // Task 21: Normalization of snake_case and capabilities fields

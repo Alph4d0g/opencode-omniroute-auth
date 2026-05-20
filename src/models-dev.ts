@@ -76,11 +76,153 @@ interface ModelsDevCache {
   timestamp: number;
 }
 
-// In-memory cache for models.dev data
-let modelsDevCache: ModelsDevCache | null = null;
+// In-memory cache for models.dev data, keyed by URL to prevent cross-config leakage
+const modelsDevCacheMap = new Map<string, ModelsDevCache>();
 
 /**
- * Fetch models.dev data with caching
+ * Failure classification for models.dev fetch attempts
+ */
+type FailureClass =
+  | 'timeout'
+  | 'network'
+  | 'http_retryable'
+  | 'http_non_retryable'
+  | 'parse'
+  | 'invalid_structure';
+
+interface FetchFailure {
+  class: FailureClass;
+  status?: number;
+  elapsedMs: number;
+  message: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isModelsDevData(value: unknown): value is ModelsDevData {
+  if (!isRecord(value)) return false;
+
+  const providers = Object.values(value);
+  if (providers.length === 0) return false;
+
+  for (const provider of providers) {
+    if (!isRecord(provider) || typeof provider.id !== 'string' || !isRecord(provider.models)) {
+      return false;
+    }
+
+    for (const model of Object.values(provider.models)) {
+      if (!isRecord(model)) return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Sleep helper for backoff delays
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Determine if a failed attempt should be retried
+ */
+function shouldRetryModelsDevFailure(failure: FetchFailure): boolean {
+  return (
+    failure.class === 'timeout' ||
+    failure.class === 'network' ||
+    failure.class === 'http_retryable'
+  );
+}
+
+/**
+ * Execute a single fetch attempt to models.dev with structured failure classification
+ */
+async function fetchModelsDevOnce(
+  url: string,
+  timeoutMs: number,
+): Promise<{ data: ModelsDevData; elapsedMs: number } | FetchFailure> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const start = Date.now();
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: new Headers({ Accept: 'application/json' }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const elapsedMs = Date.now() - start;
+      if (response.status === 429 || response.status >= 500) {
+        return {
+          class: 'http_retryable',
+          status: response.status,
+          elapsedMs,
+          message: `HTTP ${response.status}`,
+        };
+      }
+      return {
+        class: 'http_non_retryable',
+        status: response.status,
+        elapsedMs,
+        message: `HTTP ${response.status}`,
+      };
+    }
+
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch (parseError) {
+      const elapsedMs = Date.now() - start;
+      return {
+        class: 'parse',
+        elapsedMs,
+        message:
+          parseError instanceof Error ? parseError.message : 'JSON parse error',
+      };
+    }
+
+    if (!isModelsDevData(data)) {
+      const elapsedMs = Date.now() - start;
+      return {
+        class: 'invalid_structure',
+        elapsedMs,
+        message: 'Response is not valid models.dev data',
+      };
+    }
+
+    const elapsedMs = Date.now() - start;
+    return { data, elapsedMs };
+  } catch (error) {
+    const elapsedMs = Date.now() - start;
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        class: 'timeout',
+        elapsedMs,
+        message: `Request aborted after ${timeoutMs}ms`,
+      };
+    }
+    return {
+      class: 'network',
+      elapsedMs,
+      message: error instanceof Error ? error.message : 'Network error',
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Fetch models.dev data with caching, retries, and stale fallback.
+ *
+ * Worst-case cold-start latency when upstream is unavailable:
+ * 3 attempts × 5000ms timeout + 250ms + 500ms backoff ≈ 15.75s.
+ * This is an accepted trade-off for reliability per design spec.
  */
 export async function fetchModelsDevData(
   config?: OmniRouteConfig,
@@ -89,53 +231,66 @@ export async function fetchModelsDevData(
   const timeoutMs = config?.modelsDev?.timeoutMs ?? MODELS_DEV_TIMEOUT_MS;
   const cacheTtl = config?.modelsDev?.cacheTtl ?? MODELS_DEV_CACHE_TTL;
 
-  // Check cache first
-  if (modelsDevCache && Date.now() - modelsDevCache.timestamp < cacheTtl) {
-    debug('Using cached models.dev data');
-    return modelsDevCache.data;
+  const cached = modelsDevCacheMap.get(url);
+
+  // Check fresh cache first
+  if (cached && Date.now() - cached.timestamp < cacheTtl) {
+    debug(`Using cached models.dev data for ${url}`);
+    return cached.data;
   }
 
-  debug(`Fetching models.dev data from ${url}`);
+  const staleCache = cached ?? null;
+  const overallStart = Date.now();
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await fetchModelsDevOnce(url, timeoutMs);
 
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      warn(`Failed to fetch models.dev data: ${response.status}`);
-      return null;
+    if ('data' in result) {
+      // Success: update cache and return
+      modelsDevCacheMap.set(url, {
+        data: result.data,
+        timestamp: Date.now(),
+      });
+      const totalElapsed = Date.now() - overallStart;
+      const providerCount = Object.keys(result.data).length;
+      debug(
+        `Successfully fetched models.dev data on attempt ${attempt} ` +
+          `(total ${totalElapsed}ms, ${providerCount} providers)`,
+      );
+      return result.data;
     }
 
-    const data = await response.json() as ModelsDevData;
+    // Failure: log structured diagnostics
+    const failure = result;
+    warn(
+      `models.dev fetch attempt ${attempt} failed: ` +
+        `class=${failure.class}` +
+        `${failure.status !== undefined ? ` status=${failure.status}` : ''} ` +
+        `elapsed=${failure.elapsedMs}ms`,
+    );
 
-    // Validate structure
-    if (!data || typeof data !== 'object') {
-      warn('Invalid models.dev data structure');
-      return null;
+    if (!shouldRetryModelsDevFailure(failure)) {
+      break;
     }
 
-    // Update cache
-    modelsDevCache = {
-      data,
-      timestamp: Date.now(),
-    };
-
-    debug('Successfully fetched models.dev data');
-    return data;
-  } catch (error) {
-    warn(`Error fetching models.dev data: ${error}`);
-    return null;
-  } finally {
-    clearTimeout(timeoutId);
+    if (attempt < 3) {
+      const backoff = attempt === 1 ? 250 : 500;
+      await sleep(backoff);
+    }
   }
+
+  // All attempts exhausted: fall back to stale cache if available
+  if (staleCache) {
+    const staleAge = Date.now() - staleCache.timestamp;
+    warn(
+      `Live refresh failed after retries. ` +
+        `Returning stale models.dev cache (age=${staleAge}ms)`,
+    );
+    return staleCache.data;
+  }
+
+  warn('All models.dev fetch attempts failed and no cache available');
+  return null;
 }
 
 /**
@@ -205,7 +360,7 @@ export async function getModelsDevIndex(
  * Clear the models.dev cache
  */
 export function clearModelsDevCache(): void {
-  modelsDevCache = null;
+  modelsDevCacheMap.clear();
   debug('models.dev cache cleared');
 }
 
@@ -481,4 +636,3 @@ export function stripVariantSuffix(modelKey: string): { base: string; stripped: 
   }
   return { base: modelKey, stripped: false };
 }
-

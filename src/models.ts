@@ -1,4 +1,4 @@
-import type { OmniRouteConfig, OmniRouteModel, OmniRouteModelsResponse } from './types.js';
+import type { OmniRouteConfig, OmniRouteModel, OmniRouteModelVariant, OmniRouteModelsResponse } from './types.js';
 import {
   OMNIROUTE_DEFAULT_MODELS,
   OMNIROUTE_ENDPOINTS,
@@ -168,6 +168,96 @@ export function isProviderAlias(providerPrefix: string): boolean {
 }
 
 /**
+ * Group variant-suffixed models (e.g. gpt-5.5-xhigh) under their base model.
+ * Returns a new array where every base model with variants gets a `variants` Record.
+ */
+export function groupVariantModels(models: OmniRouteModel[]): OmniRouteModel[] {
+  const realBaseModels = new Map<string, OmniRouteModel>();
+  const variantMap = new Map<string, Array<{ suffix: string; model: OmniRouteModel }>>();
+
+  // Pass 1 — Categorize
+  for (const model of models) {
+    const { base, stripped } = stripVariantSuffix(model.id);
+    if (!stripped) {
+      realBaseModels.set(model.id, model);
+    } else {
+      const suffix = model.id.slice(base.length + 1).toLowerCase();
+      const entry = variantMap.get(base);
+      if (entry) {
+        entry.push({ suffix, model });
+      } else {
+        variantMap.set(base, [{ suffix, model }]);
+      }
+    }
+  }
+
+  const result: OmniRouteModel[] = [];
+
+  // Add all real base models that have no variants (unchanged)
+  for (const [id, model] of realBaseModels) {
+    if (!variantMap.has(id)) {
+      result.push(model);
+    }
+  }
+
+  // For each base ID that has variants
+  for (const [baseId, variants] of variantMap) {
+    const baseModel = realBaseModels.get(baseId);
+
+    // Use real base model if available; otherwise create synthetic base from first variant
+    const merged: OmniRouteModel = baseModel
+      ? { ...baseModel }
+      : { ...variants[0].model, id: baseId, name: baseId };
+
+    // Build variants Record
+    const variantsRecord: Record<string, OmniRouteModelVariant> = {};
+    for (const { suffix } of variants) {
+      if (
+        suffix === 'low' ||
+        suffix === 'medium' ||
+        suffix === 'high' ||
+        suffix === 'xhigh'
+      ) {
+        variantsRecord[suffix] = { reasoningEffort: suffix };
+      }
+    }
+    merged.variants = variantsRecord;
+
+    // Merge metadata from all variants into base: use max limits and union capabilities.
+    for (const { model } of variants) {
+      if (model.contextWindow !== undefined) {
+        merged.contextWindow = Math.max(merged.contextWindow ?? 0, model.contextWindow);
+      }
+      if (model.maxTokens !== undefined) {
+        merged.maxTokens = Math.max(merged.maxTokens ?? 0, model.maxTokens);
+      }
+      if (model.supportsReasoning) {
+        merged.supportsReasoning = true;
+      }
+      if (model.supportsVision) {
+        merged.supportsVision = true;
+      }
+      if (model.supportsTools) {
+        merged.supportsTools = true;
+      }
+      if (model.supportsStreaming) {
+        merged.supportsStreaming = true;
+      }
+      if (model.supportsTemperature) {
+        merged.supportsTemperature = true;
+      }
+      if (model.supportsAttachment) {
+        merged.supportsAttachment = true;
+      }
+    }
+
+    result.push(merged);
+  }
+
+  return result;
+}
+
+/**
  * Fetch models from OmniRoute /v1/models endpoint
  * This is the CRITICAL FEATURE - dynamically fetches available models
  *
@@ -248,9 +338,8 @@ export async function fetchModels(
       .map(normalizeModel);
 
     const dedupedModels = deduplicateModels(rawModels);
-
-    // Enrich with models.dev and combo capabilities
-    const models = await enrichModelMetadata(dedupedModels, config);
+    const groupedModels = groupVariantModels(dedupedModels);
+    const models = await enrichModelMetadata(groupedModels, config);
 
     // Update cache
     modelCache.set(cacheKey, {
@@ -463,5 +552,4 @@ function lookupModelsDevModel(
 
   return undefined;
 }
-
 
