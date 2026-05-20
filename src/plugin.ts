@@ -607,20 +607,26 @@ function metadataMatcherMatches(match: unknown, modelId: string): boolean {
   return regexp.test(modelId);
 }
 
+const MODEL_METADATA_KEYS = [
+  'name',
+  'description',
+  'contextWindow',
+  'maxTokens',
+  'supportsStreaming',
+  'supportsVision',
+  'supportsTools',
+  'supportsTemperature',
+  'supportsReasoning',
+  'supportsAttachment',
+  'pricing',
+] as const satisfies readonly (keyof OmniRouteModelMetadata)[];
+
 function extractModelMetadata(value: OmniRouteModelMetadata): OmniRouteModelMetadata {
-  return {
-    ...('name' in value ? { name: value.name } : {}),
-    ...('description' in value ? { description: value.description } : {}),
-    ...('contextWindow' in value ? { contextWindow: value.contextWindow } : {}),
-    ...('maxTokens' in value ? { maxTokens: value.maxTokens } : {}),
-    ...('supportsStreaming' in value ? { supportsStreaming: value.supportsStreaming } : {}),
-    ...('supportsVision' in value ? { supportsVision: value.supportsVision } : {}),
-    ...('supportsTools' in value ? { supportsTools: value.supportsTools } : {}),
-    ...('supportsTemperature' in value ? { supportsTemperature: value.supportsTemperature } : {}),
-    ...('supportsReasoning' in value ? { supportsReasoning: value.supportsReasoning } : {}),
-    ...('supportsAttachment' in value ? { supportsAttachment: value.supportsAttachment } : {}),
-    ...('pricing' in value ? { pricing: value.pricing } : {}),
-  };
+  return Object.fromEntries(
+    MODEL_METADATA_KEYS
+      .filter((key) => Object.prototype.hasOwnProperty.call(value, key))
+      .map((key) => [key, value[key]]),
+  ) as OmniRouteModelMetadata;
 }
 
 function isRegExp(value: unknown): value is RegExp {
