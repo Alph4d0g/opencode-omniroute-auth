@@ -99,16 +99,11 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       };
       setRawUserModelMetadata(providerOptions, rawUserModelMetadata);
 
-      const hasExistingModels = Boolean(
-        existingProvider?.models && Object.keys(existingProvider.models).length > 0,
-      );
-      const shouldPreserveExistingModels = hasExistingModels && !getModelsGeneratedByPlugin(
-        existingProvider?.options,
-      );
-      const providerModels = shouldPreserveExistingModels
-        ? existingProvider?.models
-        : toProviderModels(effectiveModels, baseUrl);
-      setModelsGeneratedByPlugin(providerOptions, !shouldPreserveExistingModels);
+      const shouldRefreshModels = shouldRefreshProviderModels(existingProvider);
+      const providerModels = shouldRefreshModels
+        ? toProviderModels(effectiveModels, baseUrl)
+        : existingProvider?.models;
+      setModelsGeneratedByPlugin(providerOptions, shouldRefreshModels);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
         ...existingProvider,
@@ -441,6 +436,30 @@ function setModelsGeneratedByPlugin(
     configurable: true,
     writable: true,
   });
+}
+
+function hasProviderModels(provider: ProviderDefinition | undefined): boolean {
+  return Boolean(provider?.models && Object.keys(provider.models).length > 0);
+}
+
+function shouldRefreshProviderModels(provider: ProviderDefinition | undefined): boolean {
+  if (!hasProviderModels(provider)) return true;
+  if (getModelsGeneratedByPlugin(provider?.options)) return true;
+  return hasLegacyGeneratedProviderModels(provider?.models);
+}
+
+function hasLegacyGeneratedProviderModels(models: Record<string, unknown> | undefined): boolean {
+  if (!isRecord(models)) return false;
+  const values = Object.values(models);
+  if (values.length === 0) return false;
+  return values.every(isGeneratedOmniRouteProviderModel);
+}
+
+function isGeneratedOmniRouteProviderModel(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.providerID !== OMNIROUTE_PROVIDER_ID) return false;
+  if (!isRecord(value.api)) return false;
+  return value.api.npm === OMNIROUTE_PROVIDER_NPM;
 }
 
 function getStringRecord(value: unknown): Record<string, string> | undefined {

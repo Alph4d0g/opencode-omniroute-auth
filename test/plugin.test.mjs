@@ -952,6 +952,61 @@ test('config hook refreshes plugin-generated models on second run', async () => 
   }
 });
 
+test('config hook refreshes legacy generated provider models without marker', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'fresh-model', name: 'Fresh Model', contextWindow: 512000 }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          api: 'chat',
+          npm: '@ai-sdk/openai-compatible',
+          options: {
+            baseURL: getDummyBaseUrl(20143),
+            apiMode: 'chat',
+          },
+          models: {
+            'stale-model': {
+              id: 'stale-model',
+              name: 'Stale Model',
+              providerID: 'omniroute',
+              api: {
+                id: 'stale-model',
+                url: getDummyBaseUrl(20143),
+                npm: '@ai-sdk/openai-compatible',
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+
+    assert.equal(config.provider.omniroute.models['stale-model'], undefined);
+    assert.ok(config.provider.omniroute.models['fresh-model']);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
 test('config hook preserves explicit user provider models', async () => {
   const tempHome = await createTempAuthHome();
   try {
