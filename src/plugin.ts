@@ -19,7 +19,7 @@ import {
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_OUTPUT_LIMIT,
 } from './constants.js';
-import { fetchModels, resolveProviderAliasForMetadata, isProviderAlias } from './models.js';
+import { fetchModels, resolveProviderAliasForMetadata } from './models.js';
 import { warn, debug } from './logger.js';
 import { sanitizeForLog } from './omniroute-combos.js';
 
@@ -31,6 +31,14 @@ type AuthHook = NonNullable<Hooks['auth']>;
 type AuthLoader = NonNullable<AuthHook['loader']>;
 type AuthAccessor = Parameters<AuthLoader>[0];
 type ProviderDefinition = Parameters<AuthLoader>[1];
+const RAW_MODEL_METADATA = Symbol('omniroute.rawModelMetadata');
+const RAW_MODEL_METADATA_OPTION = '__omnirouteRawModelMetadata';
+const MODELS_GENERATED_BY_PLUGIN = Symbol('omniroute.modelsGeneratedByPlugin');
+const MODELS_GENERATED_BY_PLUGIN_OPTION = '__omnirouteModelsGeneratedByPlugin';
+type OptionsWithRawModelMetadata = Record<string, unknown> & {
+  [RAW_MODEL_METADATA]?: unknown;
+  [MODELS_GENERATED_BY_PLUGIN]?: unknown;
+};
 
 export const OmniRouteAuthPlugin: Plugin = async (_input) => {
   return {
@@ -40,6 +48,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const baseUrl = getBaseUrl(existingProvider?.options);
       const apiMode = getApiMode(existingProvider?.options);
       const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
+      const rawUserModelMetadata = getRawUserModelMetadata(existingProvider?.options);
 
       // Eagerly fetch models for OpenCode <=1.14.48 (which read models from config hook).
       // OpenCode >=1.14.49 uses the provider hook below instead.
@@ -54,6 +63,11 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       } catch (error) {
         warn(`Eager model fetch failed, using defaults: ${error}`);
       }
+
+      const effectiveModels = applyModelMetadataOverrides(
+        models,
+        rawUserModelMetadata,
+      );
 
       const generatedModelMetadata: Record<string, OmniRouteModelMetadata> = {};
       for (const model of models) {
@@ -73,9 +87,23 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       }
 
       const modelMetadata = mergeModelMetadata(
-        existingProvider?.options?.modelMetadata,
+        rawUserModelMetadata,
         generatedModelMetadata,
       );
+
+      const providerOptions: Record<string, unknown> = {
+        ...(existingProvider?.options ?? {}),
+        baseURL: baseUrl,
+        apiMode,
+        modelMetadata,
+      };
+      setRawUserModelMetadata(providerOptions, rawUserModelMetadata);
+
+      const shouldRefreshModels = shouldRefreshProviderModels(existingProvider);
+      const providerModels = shouldRefreshModels
+        ? toProviderModels(effectiveModels, baseUrl)
+        : existingProvider?.models;
+      setModelsGeneratedByPlugin(providerOptions, shouldRefreshModels);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
         ...existingProvider,
@@ -83,16 +111,8 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
         api: providerApi,
         npm: existingProvider?.npm ?? OMNIROUTE_PROVIDER_NPM,
         env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
-        options: {
-          ...(existingProvider?.options ?? {}),
-          baseURL: baseUrl,
-          apiMode,
-          modelMetadata,
-        },
-        models:
-          existingProvider?.models && Object.keys(existingProvider.models).length > 0
-            ? existingProvider.models
-            : toProviderModels(models, baseUrl),
+        options: providerOptions,
+        models: providerModels,
       };
 
       config.provider = providers;
@@ -107,12 +127,20 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
         if (ctx.auth?.type === 'api' && ctx.auth.key) {
           const runtimeConfig = createRuntimeConfig(provider.options, ctx.auth.key);
           const models = await fetchModels(runtimeConfig, ctx.auth.key, false);
-          return toProviderModels(models, baseUrl);
+          const effectiveModels = applyModelMetadataOverrides(
+            models,
+            getRawUserModelMetadata(provider.options),
+          );
+          return toProviderModels(effectiveModels, baseUrl);
         }
 
         // No auth yet (user hasn't /connect'd): return built-in defaults.
         // This ensures models have the correct metadata (like api.url) to work with the plugin.
-        return toProviderModels(OMNIROUTE_DEFAULT_MODELS, baseUrl);
+        const effectiveModels = applyModelMetadataOverrides(
+          OMNIROUTE_DEFAULT_MODELS,
+          getRawUserModelMetadata(provider.options),
+        );
+        return toProviderModels(effectiveModels, baseUrl);
       },
     },
     auth: createAuthHook(),
@@ -155,7 +183,11 @@ async function loadProviderOptions(
     models = OMNIROUTE_DEFAULT_MODELS;
   }
 
-  replaceProviderModels(provider, toProviderModels(models, config.baseUrl));
+  const effectiveModels = applyModelMetadataOverrides(
+    models,
+    getRawUserModelMetadata(provider.options),
+  );
+  replaceProviderModels(provider, toProviderModels(effectiveModels, config.baseUrl));
   if (isRecord(provider.models)) {
     debug(`Provider models hydrated: ${Object.keys(provider.models).length}`);
   }
@@ -340,6 +372,96 @@ function getModelMetadataConfig(
   return undefined;
 }
 
+function getRawUserModelMetadata(options: Record<string, unknown> | undefined): unknown {
+  if (!options) return undefined;
+  const optionsWithRaw = options as OptionsWithRawModelMetadata;
+  // Preserve raw user-authored modelMetadata separately from generated compatibility
+  // metadata. The non-enumerable Symbol is the in-memory fast path; if OpenCode
+  // clones/serializes options between lifecycle hooks, the internal option field
+  // survives and distinguishes "no raw metadata" (null) from generated metadata.
+  if (RAW_MODEL_METADATA in optionsWithRaw) {
+    return optionsWithRaw[RAW_MODEL_METADATA];
+  }
+  if (RAW_MODEL_METADATA_OPTION in options) {
+    return options[RAW_MODEL_METADATA_OPTION] === null
+      ? undefined
+      : options[RAW_MODEL_METADATA_OPTION];
+  }
+  return options.modelMetadata;
+}
+
+function setRawUserModelMetadata(options: Record<string, unknown>, rawUserConfig: unknown): void {
+  options[RAW_MODEL_METADATA_OPTION] = serializeRawModelMetadataForOption(rawUserConfig) ?? null;
+  Object.defineProperty(options, RAW_MODEL_METADATA, {
+    value: rawUserConfig,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function serializeRawModelMetadataForOption(raw: unknown): unknown {
+  if (!Array.isArray(raw)) return raw;
+
+  return raw.map((block) => {
+    if (!isRecord(block) || !isRegExp(block.match)) return block;
+
+    return {
+      ...block,
+      match: {
+        source: block.match.source,
+        flags: block.match.flags,
+      },
+    };
+  });
+}
+
+function getModelsGeneratedByPlugin(options: Record<string, unknown> | undefined): boolean {
+  if (!options) return false;
+  const optionsWithMarker = options as OptionsWithRawModelMetadata;
+  if (MODELS_GENERATED_BY_PLUGIN in optionsWithMarker) {
+    return optionsWithMarker[MODELS_GENERATED_BY_PLUGIN] === true;
+  }
+  return options[MODELS_GENERATED_BY_PLUGIN_OPTION] === true;
+}
+
+function setModelsGeneratedByPlugin(
+  options: Record<string, unknown>,
+  generatedByPlugin: boolean,
+): void {
+  options[MODELS_GENERATED_BY_PLUGIN_OPTION] = generatedByPlugin ? true : null;
+  Object.defineProperty(options, MODELS_GENERATED_BY_PLUGIN, {
+    value: generatedByPlugin,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function hasProviderModels(provider: ProviderDefinition | undefined): boolean {
+  return Boolean(provider?.models && Object.keys(provider.models).length > 0);
+}
+
+function shouldRefreshProviderModels(provider: ProviderDefinition | undefined): boolean {
+  if (!hasProviderModels(provider)) return true;
+  if (getModelsGeneratedByPlugin(provider?.options)) return true;
+  return hasLegacyGeneratedProviderModels(provider?.models);
+}
+
+function hasLegacyGeneratedProviderModels(models: Record<string, unknown> | undefined): boolean {
+  if (!isRecord(models)) return false;
+  const values = Object.values(models);
+  if (values.length === 0) return false;
+  return values.every(isGeneratedOmniRouteProviderModel);
+}
+
+function isGeneratedOmniRouteProviderModel(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.providerID !== OMNIROUTE_PROVIDER_ID) return false;
+  if (!isRecord(value.api)) return false;
+  return value.api.npm === OMNIROUTE_PROVIDER_NPM;
+}
+
 function getStringRecord(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) return undefined;
 
@@ -400,6 +522,130 @@ function mergeModelMetadata(
   }
 
   return generated;
+}
+
+function applyModelMetadataOverrides(
+  models: OmniRouteModel[],
+  rawUserConfig: unknown,
+): OmniRouteModel[] {
+  const userConfig = getModelMetadataConfig({ modelMetadata: rawUserConfig });
+  if (!userConfig) return models;
+
+  if (Array.isArray(userConfig)) {
+    const validBlocks = userConfig.filter((block) => {
+      const validation = isValidModelMetadata(block);
+      if (!validation.valid) {
+        warn(`Invalid metadata block for match "${sanitizeForLog(String(block.match))}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
+        return false;
+      }
+      return true;
+    });
+
+    const modelsWithOverrides = models.map((model) => {
+      const canonicalId = resolveProviderAliasForMetadata(model.id);
+      const block = validBlocks.find((candidate) =>
+        metadataBlockMatches(candidate.match, model.id, canonicalId),
+      );
+      if (!block) return model;
+
+      return {
+        ...model,
+        ...extractModelMetadata(block),
+      };
+    });
+
+    const existingModels = modelsWithOverrides.map((model) => ({
+      id: model.id,
+      canonicalId: resolveProviderAliasForMetadata(model.id),
+    }));
+    const missingModels: OmniRouteModel[] = [];
+    for (const block of validBlocks) {
+      if (block.addIfMissing !== true || typeof block.match !== 'string') continue;
+
+      const id = resolveProviderAliasForMetadata(block.match);
+      const alreadyExists = existingModels.some((model) =>
+        metadataBlockMatches(block.match, model.id, model.canonicalId),
+      ) || missingModels.some((model) => model.id === id);
+      if (alreadyExists) continue;
+
+      missingModels.push({
+        id,
+        name: block.name ?? id,
+        ...extractModelMetadata(block),
+      });
+    }
+
+    return [...modelsWithOverrides, ...missingModels];
+  }
+
+  const overrides: Record<string, OmniRouteModelMetadata> = {};
+  for (const [id, metadata] of Object.entries(userConfig)) {
+    const validation = isValidModelMetadata(metadata);
+    if (!validation.valid) {
+      warn(`Invalid metadata for model "${sanitizeForLog(id)}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
+      continue;
+    }
+
+    const canonicalId = resolveProviderAliasForMetadata(id);
+    overrides[canonicalId] = {
+      ...(overrides[canonicalId] ?? {}),
+      ...extractModelMetadata(metadata),
+    };
+  }
+
+  return models.map((model) => {
+    const canonicalId = resolveProviderAliasForMetadata(model.id);
+    const metadata = overrides[canonicalId];
+    if (!metadata) return model;
+
+    return {
+      ...model,
+      ...metadata,
+    };
+  });
+}
+
+function metadataBlockMatches(match: unknown, modelId: string, canonicalId: string): boolean {
+  if (typeof match === 'string') {
+    const canonicalMatch = resolveProviderAliasForMetadata(match);
+    return (
+      match === modelId ||
+      match === canonicalId ||
+      canonicalMatch === modelId ||
+      canonicalMatch === canonicalId
+    );
+  }
+
+  return metadataMatcherMatches(match, modelId) || metadataMatcherMatches(match, canonicalId);
+}
+
+function metadataMatcherMatches(match: unknown, modelId: string): boolean {
+  const regexp = coerceRegExp(match);
+  if (!regexp) return false;
+  regexp.lastIndex = 0;
+  return regexp.test(modelId);
+}
+
+const MODEL_METADATA_KEYS = [
+  'name',
+  'description',
+  'contextWindow',
+  'maxTokens',
+  'supportsStreaming',
+  'supportsVision',
+  'supportsTools',
+  'supportsTemperature',
+  'supportsReasoning',
+  'supportsAttachment',
+  'pricing',
+] as const satisfies readonly (keyof OmniRouteModelMetadata)[];
+
+function extractModelMetadata(value: OmniRouteModelMetadata): OmniRouteModelMetadata {
+  return Object.fromEntries(
+    MODEL_METADATA_KEYS
+      .filter((key) => Object.prototype.hasOwnProperty.call(value, key))
+      .map((key) => [key, value[key]]),
+  ) as OmniRouteModelMetadata;
 }
 
 function isRegExp(value: unknown): value is RegExp {
