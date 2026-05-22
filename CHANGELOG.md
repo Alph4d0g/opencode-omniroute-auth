@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.2] - 2026-05-22
+
+### Added
+
+- **Consolidated Agent Guidelines** — Merged `CLAUDE.md` and `AGENTS.md` into a single canonical `AGENTS.md` file. `CLAUDE.md` is now a symlink to `AGENTS.md` so both Claude Code and other agents read from the same source.
+- **Release Process Documentation** — Added complete release process steps to `AGENTS.md` (version bump, changelog, tag, GitHub release, npm publish, verification).
+
+### Fixed
+
+- **Model Metadata Overrides for Provider Models** — Fixed model metadata overrides not being applied to provider models returned by the `provider` hook. (`src/plugin.ts`) (@Alph4d0g)
+
 ## [1.2.1] - 2026-05-19
 
 ### Added
