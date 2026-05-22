@@ -10,13 +10,23 @@ import { clearModelsDevCache } from '../dist/src/models-dev.js';
 
 const ORIGINAL_FETCH = global.fetch;
 const ORIGINAL_HOME = process.env.HOME;
+const ORIGINAL_XDG_DATA_HOME = process.env.XDG_DATA_HOME;
 
 afterEach(() => {
   global.fetch = ORIGINAL_FETCH;
-  process.env.HOME = ORIGINAL_HOME;
+  restoreEnv('HOME', ORIGINAL_HOME);
+  restoreEnv('XDG_DATA_HOME', ORIGINAL_XDG_DATA_HOME);
   clearModelCache();
   clearModelsDevCache();
 });
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
 
 function getDummyBaseUrl(port = 20128) {
   return `http://localhost:${port}/v1`;
@@ -32,6 +42,16 @@ function createModelsResponse() {
       },
     ],
   };
+}
+
+async function createTempAuthHome(auth = { omniroute: { type: 'api', key: 'test-key' } }) {
+  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}-${Math.random()}`);
+  const dataHome = join(tempHome, '.local', 'share');
+  await mkdir(join(dataHome, 'opencode'), { recursive: true });
+  await writeFile(join(dataHome, 'opencode', 'auth.json'), JSON.stringify(auth));
+  process.env.HOME = tempHome;
+  process.env.XDG_DATA_HOME = dataHome;
+  return tempHome;
 }
 
 test('config hook applies defaults and normalized apiMode', async () => {
@@ -108,6 +128,45 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
 
   const externalHeaders = new Headers(externalCall.init?.headers);
   assert.equal(externalHeaders.get('Authorization'), null);
+});
+
+test('auth loader applies user modelMetadata override to provider models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: 1050000 }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(20133),
+      apiMode: 'chat',
+      modelMetadata: {
+        'codex/gpt-5.5': {
+          contextWindow: 512000,
+        },
+      },
+    },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.equal(provider.models['codex/gpt-5.5'].limit.context, 512000);
 });
 
 test('gemini tool schema payload is sanitized before forwarding', async () => {
@@ -331,6 +390,420 @@ test('provider hook fetches models when auth is available via context', async ()
   assert.equal(result['live-model'].providerID, 'omniroute');
 });
 
+test('provider hook applies modelMetadata overrides before converting models', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: 1050000 }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: getDummyBaseUrl(20132),
+        apiMode: 'chat',
+        modelMetadata: {
+          'codex/gpt-5.5': {
+            contextWindow: 512000,
+          },
+        },
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'live-key' } },
+  );
+
+  assert.equal(result['codex/gpt-5.5'].limit.context, 512000);
+});
+
+test('provider hook applies array literal alias block to canonical fetched model', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: 1050000 }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: getDummyBaseUrl(20137),
+        apiMode: 'chat',
+        modelMetadata: [{ match: 'cx/gpt-5.5', contextWindow: 512000 }],
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'live-key' } },
+  );
+
+  assert.equal(result['codex/gpt-5.5'].limit.context, 512000);
+});
+
+test('provider hook treats string metadata match as a literal model id', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', contextWindow: 8192 },
+            { id: 'gpt-4x1-mini', name: 'GPT-4x1 Mini', contextWindow: 4096 },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: getDummyBaseUrl(20142),
+        apiMode: 'chat',
+        modelMetadata: [{ match: 'gpt-4.1-mini', contextWindow: 12345 }],
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'live-key' } },
+  );
+
+  assert.equal(result['gpt-4.1-mini'].limit.context, 12345);
+  assert.equal(result['gpt-4x1-mini'].limit.context, 4096);
+});
+
+test('provider hook addIfMissing array block creates canonical missing model', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'other-model', name: 'Other Model', contextWindow: 4096 }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: getDummyBaseUrl(20138),
+        apiMode: 'chat',
+        modelMetadata: [
+          {
+            match: 'cx/gpt-5.5',
+            addIfMissing: true,
+            name: 'GPT-5.5 Virtual',
+            contextWindow: 512000,
+          },
+        ],
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'live-key' } },
+  );
+
+  assert.equal(result['codex/gpt-5.5'].name, 'GPT-5.5 Virtual');
+  assert.equal(result['codex/gpt-5.5'].limit.context, 512000);
+  assert.equal(result['cx/gpt-5.5'], undefined);
+});
+
+test('provider hook ignores generated modelMetadata from config hook', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
+
+    let modelContextWindow = 1050000;
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: modelContextWindow }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          options: {
+            baseURL: getDummyBaseUrl(20134),
+            apiMode: 'chat',
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+    assert.equal(
+      config.provider.omniroute.options.modelMetadata['codex/gpt-5.5'].contextWindow,
+      1050000,
+    );
+
+    modelContextWindow = 512000;
+    const clonedOptions = JSON.parse(JSON.stringify(config.provider.omniroute.options));
+    const result = await plugin.provider.models(
+      {
+        id: 'omniroute',
+        name: 'OmniRoute',
+        source: 'config',
+        env: [],
+        options: clonedOptions,
+        models: config.provider.omniroute.models,
+      },
+      { auth: { type: 'api', key: 'live-key' } },
+    );
+
+    assert.equal(result['codex/gpt-5.5'].limit.context, 512000);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('provider hook uses raw user modelMetadata after config hook generated metadata', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
+
+    let modelContextWindow = 1050000;
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: modelContextWindow }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          options: {
+            baseURL: getDummyBaseUrl(20135),
+            apiMode: 'chat',
+            modelMetadata: {
+              'codex/gpt-5.5': {
+                contextWindow: 258000,
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+    assert.equal(
+      config.provider.omniroute.options.modelMetadata['codex/gpt-5.5'].contextWindow,
+      258000,
+    );
+
+    config.provider.omniroute.options.modelMetadata['codex/gpt-5.5'].contextWindow = 999000;
+    modelContextWindow = 512000;
+
+    const clonedOptions = JSON.parse(JSON.stringify(config.provider.omniroute.options));
+    const result = await plugin.provider.models(
+      {
+        id: 'omniroute',
+        name: 'OmniRoute',
+        source: 'config',
+        env: [],
+        options: clonedOptions,
+        models: config.provider.omniroute.models,
+      },
+      { auth: { type: 'api', key: 'live-key' } },
+    );
+
+    assert.equal(result['codex/gpt-5.5'].limit.context, 258000);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('provider hook uses RegExp raw modelMetadata after config hook JSON clone', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
+
+    let modelContextWindow = 1050000;
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: modelContextWindow }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          options: {
+            baseURL: getDummyBaseUrl(20139),
+            apiMode: 'chat',
+            modelMetadata: [{ match: /gpt-5\.5$/, contextWindow: 258000 }],
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+    modelContextWindow = 512000;
+
+    const result = await plugin.provider.models(
+      {
+        id: 'omniroute',
+        name: 'OmniRoute',
+        source: 'config',
+        env: [],
+        options: JSON.parse(JSON.stringify(config.provider.omniroute.options)),
+        models: config.provider.omniroute.models,
+      },
+      { auth: { type: 'api', key: 'live-key' } },
+    );
+
+    assert.equal(result['codex/gpt-5.5'].limit.context, 258000);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('auth loader uses raw user modelMetadata after config hook generated metadata', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
+
+    let modelContextWindow = 1050000;
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: modelContextWindow }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          options: {
+            baseURL: getDummyBaseUrl(20136),
+            apiMode: 'chat',
+            modelMetadata: {
+              'codex/gpt-5.5': {
+                contextWindow: 258000,
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+    assert.equal(config.provider.omniroute.models['codex/gpt-5.5'].limit.context, 258000);
+
+    config.provider.omniroute.options.modelMetadata['codex/gpt-5.5'].contextWindow = 999000;
+    modelContextWindow = 512000;
+
+    config.provider.omniroute.options = JSON.parse(JSON.stringify(config.provider.omniroute.options));
+
+    await plugin.auth.loader(
+      async () => ({ type: 'api', key: 'live-key' }),
+      config.provider.omniroute,
+    );
+
+    assert.equal(config.provider.omniroute.models['codex/gpt-5.5'].limit.context, 258000);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
 test('provider hook ignores stale provider.models and returns defaults when no auth available', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 
@@ -393,16 +866,8 @@ test('provider hook returns defaults when fetch fails (fetchModels handles error
 });
 
 test('config hook eagerly fetches models when auth is available', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({
-        omniroute: { type: 'api', key: 'test-key' },
-      }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -442,15 +907,163 @@ test('config hook eagerly fetches models when auth is available', async () => {
   }
 });
 
-test('config hook preserves user modelMetadata object overrides', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+test('config hook refreshes plugin-generated models on second run', async () => {
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
+
+    let modelContextWindow = 1050000;
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: modelContextWindow }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          options: {
+            baseURL: getDummyBaseUrl(20140),
+            apiMode: 'chat',
+            modelCacheTtl: 1,
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+    assert.equal(config.provider.omniroute.models['codex/gpt-5.5'].limit.context, 1050000);
+
+    modelContextWindow = 512000;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    config.provider.omniroute.options = JSON.parse(JSON.stringify(config.provider.omniroute.options));
+    await plugin.config(config);
+
+    assert.equal(config.provider.omniroute.models['codex/gpt-5.5'].limit.context, 512000);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('config hook refreshes legacy generated provider models without marker', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'fresh-model', name: 'Fresh Model', contextWindow: 512000 }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          api: 'chat',
+          npm: '@ai-sdk/openai-compatible',
+          options: {
+            baseURL: getDummyBaseUrl(20143),
+            apiMode: 'chat',
+          },
+          models: {
+            'stale-model': {
+              id: 'stale-model',
+              name: 'Stale Model',
+              providerID: 'omniroute',
+              api: {
+                id: 'stale-model',
+                url: getDummyBaseUrl(20143),
+                npm: '@ai-sdk/openai-compatible',
+              },
+            },
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+
+    assert.equal(config.provider.omniroute.models['stale-model'], undefined);
+    assert.ok(config.provider.omniroute.models['fresh-model']);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('config hook preserves explicit user provider models', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
+
+    global.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.endsWith('/v1/models')) {
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'fetched-model', name: 'Fetched Model', contextWindow: 512000 }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const explicitModel = {
+      id: 'explicit-model',
+      name: 'Explicit Model',
+      providerID: 'omniroute',
+    };
+    const plugin = await OmniRouteAuthPlugin({});
+    const config = {
+      provider: {
+        omniroute: {
+          options: {
+            baseURL: getDummyBaseUrl(20141),
+            apiMode: 'chat',
+          },
+          models: {
+            'explicit-model': explicitModel,
+          },
+        },
+      },
+    };
+
+    await plugin.config(config);
+
+    assert.equal(config.provider.omniroute.models['explicit-model'], explicitModel);
+    assert.equal(config.provider.omniroute.models['fetched-model'], undefined);
+  } finally {
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('config hook preserves user modelMetadata object overrides', async () => {
+  const tempHome = await createTempAuthHome();
+  try {
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -498,20 +1111,17 @@ test('config hook preserves user modelMetadata object overrides', async () => {
     const metadata = config.provider.omniroute.options.modelMetadata['codex/gpt-5.5'];
     assert.equal(metadata.contextWindow, 258000);
     assert.equal(metadata.supportsReasoning, true);
+    const model = config.provider.omniroute.models['codex/gpt-5.5'];
+    assert.equal(model.limit.context, 258000);
+    assert.equal(model.reasoning, true);
   } finally {
     await rm(tempHome, { recursive: true, force: true });
   }
 });
 
 test('config hook preserves user modelMetadata match blocks', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
@@ -531,7 +1141,7 @@ test('config hook preserves user modelMetadata match blocks', async () => {
     };
 
     const userBlock = {
-      match: '^(codex|cx)/.*gpt-5',
+      match: /^(codex|cx)\/.*gpt-5/,
       contextWindow: 258000,
     };
     const plugin = await OmniRouteAuthPlugin({});
@@ -551,24 +1161,20 @@ test('config hook preserves user modelMetadata match blocks', async () => {
     const metadata = config.provider.omniroute.options.modelMetadata;
     assert.ok(Array.isArray(metadata));
     // User config comes first in first-match-wins systems
-    assert.deepEqual(metadata[0], userBlock);
+    assert.equal(metadata[0].match, userBlock.match);
+    assert.equal(metadata[0].contextWindow, 258000);
     // Generated metadata follows user config
     assert.equal(metadata[1].match, 'codex/gpt-5.5');
     assert.equal(metadata[1].contextWindow, 1050000);
+    assert.equal(config.provider.omniroute.models['codex/gpt-5.5'].limit.context, 258000);
   } finally {
     await rm(tempHome, { recursive: true, force: true });
   }
 });
 
 test('config hook respects explicit attachment false for vision models', async () => {
-  const tempHome = join(tmpdir(), `opencode-test-${Date.now()}`);
+  const tempHome = await createTempAuthHome();
   try {
-    await mkdir(join(tempHome, '.local', 'share', 'opencode'), { recursive: true });
-    await writeFile(
-      join(tempHome, '.local', 'share', 'opencode', 'auth.json'),
-      JSON.stringify({ omniroute: { type: 'api', key: 'test-key' } }),
-    );
-    process.env.HOME = tempHome;
 
     global.fetch = async (input) => {
       const url = input instanceof Request ? input.url : String(input);
