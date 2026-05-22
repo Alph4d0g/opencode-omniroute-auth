@@ -532,25 +532,44 @@ function applyModelMetadataOverrides(
   if (!userConfig) return models;
 
   if (Array.isArray(userConfig)) {
-    const validBlocks = userConfig.filter((block) => {
+    // Pre-process blocks once: canonicalize string matches, compile regexes,
+    // and extract metadata. Avoids redundant work inside the per-model loops.
+    type ProcessedBlock = {
+      match: string | RegExp;
+      canonicalMatch: string | null;
+      metadata: OmniRouteModelMetadata;
+      addIfMissing: boolean;
+    };
+
+    const processedBlocks: ProcessedBlock[] = [];
+    for (const block of userConfig) {
       const validation = isValidModelMetadata(block);
       if (!validation.valid) {
         warn(`Invalid metadata block for match "${sanitizeForLog(String(block.match))}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
-        return false;
+        continue;
       }
-      return true;
-    });
+
+      const match = block.match;
+      const canonicalMatch = typeof match === 'string' ? resolveProviderAliasForMetadata(match) : null;
+      const metadata = extractModelMetadata(block);
+      processedBlocks.push({
+        match,
+        canonicalMatch,
+        metadata,
+        addIfMissing: block.addIfMissing === true,
+      });
+    }
 
     const modelsWithOverrides = models.map((model) => {
       const canonicalId = resolveProviderAliasForMetadata(model.id);
-      const block = validBlocks.find((candidate) =>
-        metadataBlockMatches(candidate.match, model.id, canonicalId),
+      const processed = processedBlocks.find((candidate) =>
+        processedBlockMatches(candidate, model.id, canonicalId),
       );
-      if (!block) return model;
+      if (!processed) return model;
 
       return {
         ...model,
-        ...extractModelMetadata(block),
+        ...processed.metadata,
       };
     });
 
@@ -559,19 +578,19 @@ function applyModelMetadataOverrides(
       canonicalId: resolveProviderAliasForMetadata(model.id),
     }));
     const missingModels: OmniRouteModel[] = [];
-    for (const block of validBlocks) {
-      if (block.addIfMissing !== true || typeof block.match !== 'string') continue;
+    for (const processed of processedBlocks) {
+      if (!processed.addIfMissing || typeof processed.match !== 'string') continue;
 
-      const id = resolveProviderAliasForMetadata(block.match);
+      const id = processed.canonicalMatch ?? processed.match;
       const alreadyExists = existingModels.some((model) =>
-        metadataBlockMatches(block.match, model.id, model.canonicalId),
+        processedBlockMatches(processed, model.id, model.canonicalId),
       ) || missingModels.some((model) => model.id === id);
       if (alreadyExists) continue;
 
       missingModels.push({
         id,
-        name: block.name ?? id,
-        ...extractModelMetadata(block),
+        name: processed.metadata.name ?? id,
+        ...processed.metadata,
       });
     }
 
@@ -617,6 +636,23 @@ function metadataBlockMatches(match: unknown, modelId: string, canonicalId: stri
   }
 
   return metadataMatcherMatches(match, modelId) || metadataMatcherMatches(match, canonicalId);
+}
+
+function processedBlockMatches(
+  processed: { match: string | RegExp; canonicalMatch: string | null },
+  modelId: string,
+  canonicalId: string,
+): boolean {
+  if (typeof processed.match === 'string') {
+    return (
+      processed.match === modelId ||
+      processed.match === canonicalId ||
+      processed.canonicalMatch === modelId ||
+      processed.canonicalMatch === canonicalId
+    );
+  }
+
+  return metadataMatcherMatches(processed.match, modelId) || metadataMatcherMatches(processed.match, canonicalId);
 }
 
 function metadataMatcherMatches(match: unknown, modelId: string): boolean {
