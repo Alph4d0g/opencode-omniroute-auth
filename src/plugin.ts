@@ -266,7 +266,7 @@ function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
     return value;
   }
 
-    warn(`Unsupported apiMode option: ${sanitizeForLog(String(value))}. Using chat.`);
+  warn(`Unsupported apiMode option: ${sanitizeForLog(String(value))}. Using chat.`);
   return 'chat';
 }
 
