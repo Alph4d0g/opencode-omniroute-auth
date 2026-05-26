@@ -924,7 +924,7 @@ async function normalizeChatUsageResponse(url: string, response: Response): Prom
 
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
   if (contentType.includes('application/json')) {
-    return normalizeJsonChatUsageResponse(response);
+    return await normalizeJsonChatUsageResponse(response);
   }
 
   if (contentType.includes('text/event-stream')) {
