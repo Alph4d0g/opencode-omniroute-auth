@@ -24,7 +24,8 @@ import { warn, debug } from './logger.js';
 import { sanitizeForLog } from './omniroute-combos.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
-const OMNIROUTE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/openai';
 const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
 
 type AuthHook = NonNullable<Hooks['auth']>;
@@ -48,6 +49,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const baseUrl = getBaseUrl(existingProvider?.options);
       const apiMode = getApiMode(existingProvider?.options);
       const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
+      const providerNpm = resolveProviderNpm(existingProvider?.npm, apiMode);
       const rawUserModelMetadata = getRawUserModelMetadata(existingProvider?.options);
 
       // Eagerly fetch models for OpenCode <=1.14.48 (which read models from config hook).
@@ -101,7 +103,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
 
       const shouldRefreshModels = shouldRefreshProviderModels(existingProvider);
       const providerModels = shouldRefreshModels
-        ? toProviderModels(effectiveModels, baseUrl)
+        ? toProviderModels(effectiveModels, baseUrl, providerNpm)
         : existingProvider?.models;
       setModelsGeneratedByPlugin(providerOptions, shouldRefreshModels);
 
@@ -109,7 +111,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
         ...existingProvider,
         name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
         api: providerApi,
-        npm: existingProvider?.npm ?? OMNIROUTE_PROVIDER_NPM,
+        npm: providerNpm,
         env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
         options: providerOptions,
         models: providerModels,
@@ -122,6 +124,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       id: OMNIROUTE_PROVIDER_ID,
       models: async (provider, ctx) => {
         const baseUrl = getBaseUrl(provider.options);
+        const providerNpm = getProviderNpm(getApiMode(provider.options));
 
         // Auth available — fetch /v1/models (fetchModels falls back to defaults on error)
         if (ctx.auth?.type === 'api' && ctx.auth.key) {
@@ -131,7 +134,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
             models,
             getRawUserModelMetadata(provider.options),
           );
-          return toProviderModels(effectiveModels, baseUrl);
+          return toProviderModels(effectiveModels, baseUrl, providerNpm);
         }
 
         // No auth yet (user hasn't /connect'd): return built-in defaults.
@@ -140,7 +143,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           OMNIROUTE_DEFAULT_MODELS,
           getRawUserModelMetadata(provider.options),
         );
-        return toProviderModels(effectiveModels, baseUrl);
+        return toProviderModels(effectiveModels, baseUrl, providerNpm);
       },
     },
     auth: createAuthHook(),
@@ -187,7 +190,8 @@ async function loadProviderOptions(
     models,
     getRawUserModelMetadata(provider.options),
   );
-  replaceProviderModels(provider, toProviderModels(effectiveModels, config.baseUrl));
+  const providerNpm = resolveProviderNpm(provider.npm, config.apiMode);
+  replaceProviderModels(provider, toProviderModels(effectiveModels, config.baseUrl, providerNpm));
   if (isRecord(provider.models)) {
     debug(`Provider models hydrated: ${Object.keys(provider.models).length}`);
   }
@@ -254,6 +258,33 @@ function resolveProviderApi(api: unknown, apiMode: OmniRouteApiMode): OmniRouteA
   }
 
   return apiMode;
+}
+
+function resolveProviderNpm(npm: unknown, apiMode: OmniRouteApiMode): string {
+  const expected = getProviderNpm(apiMode);
+  if (typeof npm !== 'string' || !npm.trim()) {
+    return expected;
+  }
+
+  const current = npm.trim();
+  if (!isOmniRouteProviderNpm(current)) {
+    return current;
+  }
+
+  if (current !== expected) {
+    warn(`provider.npm (${sanitizeForLog(current)}) and options.apiMode (${sanitizeForLog(apiMode)}) differ; using ${sanitizeForLog(expected)}.`);
+  }
+  return expected;
+}
+
+function getProviderNpm(apiMode: OmniRouteApiMode): string {
+  return apiMode === 'responses'
+    ? OMNIROUTE_RESPONSES_PROVIDER_NPM
+    : OMNIROUTE_CHAT_PROVIDER_NPM;
+}
+
+function isOmniRouteProviderNpm(value: string): boolean {
+  return value === OMNIROUTE_CHAT_PROVIDER_NPM || value === OMNIROUTE_RESPONSES_PROVIDER_NPM;
 }
 
 function getApiMode(options?: Record<string, unknown>): OmniRouteApiMode {
@@ -459,7 +490,7 @@ function isGeneratedOmniRouteProviderModel(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (value.providerID !== OMNIROUTE_PROVIDER_ID) return false;
   if (!isRecord(value.api)) return false;
-  return value.api.npm === OMNIROUTE_PROVIDER_NPM;
+  return typeof value.api.npm === 'string' && isOmniRouteProviderNpm(value.api.npm);
 }
 
 function getStringRecord(value: unknown): Record<string, string> | undefined {
@@ -767,15 +798,20 @@ function isValidModelMetadata(value: unknown): { valid: boolean; field?: string 
 function toProviderModels(
   models: OmniRouteModel[],
   baseUrl: string,
+  providerNpm: string,
 ): Record<string, OmniRouteProviderModel> {
   const entries: Array<[string, OmniRouteProviderModel]> = models.map((model) => [
     model.id,
-    toProviderModel(model, baseUrl),
+    toProviderModel(model, baseUrl, providerNpm),
   ]);
   return Object.fromEntries(entries);
 }
 
-function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProviderModel {
+function toProviderModel(
+  model: OmniRouteModel,
+  baseUrl: string,
+  providerNpm: string,
+): OmniRouteProviderModel {
   const supportsVision = model.supportsVision === true;
   // Default to true: if API doesn't explicitly say no tools, assume capability exists
   // This aligns with OpenAI-compatible behavior where most models support tools
@@ -801,7 +837,7 @@ function toProviderModel(model: OmniRouteModel, baseUrl: string): OmniRouteProvi
     api: {
       id: model.id,
       url: baseUrl,
-      npm: OMNIROUTE_PROVIDER_NPM,
+      npm: providerNpm,
     },
     capabilities: {
       temperature: supportsTemperature,
