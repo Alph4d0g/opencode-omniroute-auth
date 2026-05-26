@@ -913,8 +913,142 @@ function createFetchInterceptor(
       debug('Processing /v1/models response');
     }
 
-    return response;
+    return normalizeChatUsageResponse(url, response);
   };
+}
+
+async function normalizeChatUsageResponse(url: string, response: Response): Promise<Response> {
+  if (!response.ok || !url.includes('/chat/completions')) {
+    return response;
+  }
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (contentType.includes('application/json')) {
+    return normalizeJsonChatUsageResponse(response);
+  }
+
+  if (contentType.includes('text/event-stream')) {
+    return normalizeSseChatUsageResponse(response);
+  }
+
+  return response;
+}
+
+async function normalizeJsonChatUsageResponse(response: Response): Promise<Response> {
+  let payload: unknown;
+  try {
+    payload = await response.clone().json();
+  } catch {
+    return response;
+  }
+
+  if (!isRecord(payload) || !normalizeCachedChatUsage(payload)) {
+    return response;
+  }
+
+  const headers = cloneMutableResponseHeaders(response.headers);
+  headers.set('Content-Type', 'application/json');
+  return new Response(JSON.stringify(payload), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function normalizeSseChatUsageResponse(response: Response): Response {
+  if (!response.body) {
+    return response;
+  }
+
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let pending = '';
+
+  const stream = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      pending += decoder.decode(chunk, { stream: true });
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+
+      for (const line of lines) {
+        controller.enqueue(encoder.encode(`${normalizeSseChatUsageLine(line)}\n`));
+      }
+    },
+    flush(controller) {
+      const tail = pending + decoder.decode();
+      if (tail) {
+        controller.enqueue(encoder.encode(normalizeSseChatUsageLine(tail)));
+      }
+    },
+  }));
+
+  return new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: cloneMutableResponseHeaders(response.headers),
+  });
+}
+
+function normalizeSseChatUsageLine(line: string): string {
+  if (!line.startsWith('data:')) {
+    return line;
+  }
+
+  const rawData = line.slice(5).trim();
+  if (!rawData || rawData === '[DONE]') {
+    return line;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawData);
+  } catch {
+    return line;
+  }
+
+  if (!isRecord(payload) || !normalizeCachedChatUsage(payload)) {
+    return line;
+  }
+
+  return `data: ${JSON.stringify(payload)}`;
+}
+
+function normalizeCachedChatUsage(payload: Record<string, unknown>): boolean {
+  const usage = payload.usage;
+  if (!isRecord(usage)) {
+    return false;
+  }
+
+  const promptTokens = getNumber(usage.prompt_tokens);
+  const promptDetails = getRecord(usage.prompt_tokens_details);
+  const cachedTokens = getNumber(promptDetails?.cached_tokens);
+  if (
+    promptTokens === undefined ||
+    cachedTokens === undefined ||
+    cachedTokens <= 0 ||
+    cachedTokens > promptTokens
+  ) {
+    return false;
+  }
+
+  // OpenCode tracks cached input separately, so prompt_tokens must be non-cached.
+  usage.prompt_tokens = promptTokens - cachedTokens;
+  return true;
+}
+
+function getNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function cloneMutableResponseHeaders(headers: Headers): Headers {
+  const next = new Headers(headers);
+  next.delete('Content-Length');
+  next.delete('Content-Encoding');
+  return next;
 }
 
 const GEMINI_SCHEMA_KEYS_TO_REMOVE = new Set(['$schema', '$ref', 'ref', 'additionalProperties']);
