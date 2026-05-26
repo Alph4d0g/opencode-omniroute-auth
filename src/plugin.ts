@@ -977,7 +977,7 @@ function normalizeSseChatUsageResponse(response: Response): Response {
     flush(controller) {
       const tail = pending + decoder.decode();
       if (tail) {
-        controller.enqueue(encoder.encode(normalizeSseChatUsageLine(tail)));
+        controller.enqueue(encoder.encode(`${normalizeSseChatUsageLine(tail)}\n`));
       }
     },
   }));
@@ -1033,6 +1033,10 @@ function normalizeCachedChatUsage(payload: Record<string, unknown>): boolean {
 
   // OpenCode tracks cached input separately, so prompt_tokens must be non-cached.
   usage.prompt_tokens = promptTokens - cachedTokens;
+  const totalTokens = getNumber(usage.total_tokens);
+  if (totalTokens !== undefined) {
+    usage.total_tokens = totalTokens - cachedTokens;
+  }
   return true;
 }
 

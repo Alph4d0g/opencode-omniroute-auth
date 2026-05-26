@@ -172,7 +172,7 @@ test('chat completion excludes cached tokens from JSON prompt tokens', async () 
 
   assert.equal(body.usage.prompt_tokens, 2629);
   assert.equal(body.usage.completion_tokens, 185);
-  assert.equal(body.usage.total_tokens, 39678);
+  assert.equal(body.usage.total_tokens, 2814);
   assert.equal(body.usage.prompt_tokens_details.cached_tokens, 36864);
 });
 
@@ -190,7 +190,7 @@ test('chat completion excludes cached tokens from streaming prompt tokens', asyn
       });
     }
 
-    return new Response(`${contentChunk}\n\n${usageChunk}\n\ndata: [DONE]\n\n`, {
+    return new Response(`${contentChunk}\n\n${usageChunk}\n\ndata: [DONE]`, {
       status: 200,
       headers: { 'Content-Type': 'text/event-stream' },
     });
@@ -212,11 +212,12 @@ test('chat completion excludes cached tokens from streaming prompt tokens', asyn
     .find((line) => line.includes('"prompt_tokens"'));
 
   assert.ok(text.includes(contentChunk));
+  assert.ok(text.endsWith('\n'));
   assert.ok(normalizedLine);
   const normalized = JSON.parse(normalizedLine.slice('data: '.length));
   assert.equal(normalized.usage.prompt_tokens, 2629);
   assert.equal(normalized.usage.completion_tokens, 185);
-  assert.equal(normalized.usage.total_tokens, 39678);
+  assert.equal(normalized.usage.total_tokens, 2814);
   assert.equal(normalized.usage.prompt_tokens_details.cached_tokens, 36864);
 });
 
