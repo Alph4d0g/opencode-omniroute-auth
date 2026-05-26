@@ -124,7 +124,10 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       id: OMNIROUTE_PROVIDER_ID,
       models: async (provider, ctx) => {
         const baseUrl = getBaseUrl(provider.options);
-        const providerNpm = getProviderNpm(getApiMode(provider.options));
+        const providerNpm = resolveProviderNpm(
+          isRecord(provider) ? provider.npm : undefined,
+          getApiMode(provider.options),
+        );
 
         // Auth available — fetch /v1/models (fetchModels falls back to defaults on error)
         if (ctx.auth?.type === 'api' && ctx.auth.key) {

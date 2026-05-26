@@ -137,6 +137,25 @@ test('provider hook selects model package for responses apiMode', async () => {
   assert.equal(result['gpt-4o'].api.npm, '@ai-sdk/openai');
 });
 
+test('provider hook preserves custom provider package', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      npm: 'custom-ai-sdk-provider',
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+      models: {},
+    },
+    { auth: undefined },
+  );
+
+  assert.equal(result['gpt-4o'].api.npm, 'custom-ai-sdk-provider');
+});
+
 test('loader injects auth headers only for OmniRoute URLs', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const calls = [];
