@@ -969,7 +969,7 @@ function createFetchInterceptor(
     headers.set('Authorization', `Bearer ${config.apiKey}`);
     headers.set('Content-Type', 'application/json');
 
-    const sanitizedBody = await sanitizeGeminiToolSchemas(input, init, url);
+    const sanitizedBody = await sanitizeRequestPayload(input, init, url);
 
     // Clone init to avoid mutating original
     const modifiedInit: RequestInit = {
@@ -1131,8 +1131,12 @@ function cloneMutableResponseHeaders(headers: Headers): Headers {
 }
 
 const GEMINI_SCHEMA_KEYS_TO_REMOVE = new Set(['$schema', '$ref', 'ref', 'additionalProperties']);
+const TITLE_PROMPT_REQUIRED_MARKERS = [
+  'You are a title generator',
+  'thread title',
+];
 
-async function sanitizeGeminiToolSchemas(
+async function sanitizeRequestPayload(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   url: string,
@@ -1157,24 +1161,111 @@ async function sanitizeGeminiToolSchemas(
     return undefined;
   }
 
+  const clonedPayload = structuredClone(payload);
+  let changed = false;
+
+  changed = stripClaudeTitleReasoningEffort(clonedPayload) || changed;
+  changed = sanitizeGeminiToolSchemas(clonedPayload) || changed;
+
+  return changed ? JSON.stringify(clonedPayload) : undefined;
+}
+
+function stripClaudeTitleReasoningEffort(payload: Record<string, unknown>): boolean {
+  const model = payload.model;
+  if (!isClaudeModel(model) || !isOpenCodeTitlePrompt(payload)) {
+    return false;
+  }
+
+  let changed = false;
+  if ('reasoning_effort' in payload) {
+    delete payload.reasoning_effort;
+    changed = true;
+  }
+  if ('reasoningEffort' in payload) {
+    delete payload.reasoningEffort;
+    changed = true;
+  }
+
+  if (changed) {
+    debug('Removed reasoning effort from Claude title request');
+  }
+
+  return changed;
+}
+
+function isClaudeModel(model: unknown): boolean {
+  if (typeof model !== 'string') return false;
+  const lower = model.toLowerCase();
+  return (
+    lower.startsWith('claude/') ||
+    lower.startsWith('claude-') ||
+    lower.startsWith('anthropic/') ||
+    lower.startsWith('anthropic:') ||
+    lower.includes('/claude-')
+  );
+}
+
+function isOpenCodeTitlePrompt(payload: Record<string, unknown>): boolean {
+  if (contentContainsTitlePrompt(payload.instructions)) return true;
+
+  const messages = payload.messages;
+  if (Array.isArray(messages)) {
+    return messages.some((message) => {
+      if (!isRecord(message) || message.role !== 'system') return false;
+      return contentContainsTitlePrompt(message.content);
+    });
+  }
+
+  const input = payload.input;
+  if (Array.isArray(input)) {
+    return input.some((item) => {
+      if (!isRecord(item) || item.role !== 'system') return false;
+      return contentContainsTitlePrompt(item.content);
+    });
+  }
+
+  return false;
+}
+
+function contentContainsTitlePrompt(content: unknown): boolean {
+  const text = contentToText(content);
+  if (!text) return false;
+  return TITLE_PROMPT_REQUIRED_MARKERS.every((marker) => text.includes(marker));
+}
+
+function contentToText(content: unknown): string {
+  if (typeof content === 'string') return content;
+
+  if (Array.isArray(content)) {
+    return content.map(contentToText).filter(Boolean).join('\n');
+  }
+
+  if (!isRecord(content)) return '';
+  const text = content.text;
+  if (typeof text === 'string') return text;
+  const value = content.value;
+  if (typeof value === 'string') return value;
+  const contentValue = content.content;
+  if (contentValue !== undefined) return contentToText(contentValue);
+  return '';
+}
+
+function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {
   const model = payload.model;
   if (typeof model !== 'string' || !model.toLowerCase().includes('gemini')) {
-    return undefined;
+    return false;
   }
 
   const tools = payload.tools;
   if (!Array.isArray(tools) || tools.length === 0) {
-    return undefined;
+    return false;
   }
 
-  const clonedPayload = structuredClone(payload);
-  const changed = sanitizeToolSchemaContainer(clonedPayload);
-  if (!changed) {
-    return undefined;
+  const changed = sanitizeToolSchemaContainer(payload);
+  if (changed) {
+    debug('Sanitized Gemini tool schema keywords');
   }
-
-  debug('Sanitized Gemini tool schema keywords');
-  return JSON.stringify(clonedPayload);
+  return changed;
 }
 
 async function getRawJsonBody(

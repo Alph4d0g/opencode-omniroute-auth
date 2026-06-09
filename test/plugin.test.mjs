@@ -710,6 +710,102 @@ test('non-gemini payload keeps original tool schema fields', async () => {
   );
 });
 
+test('claude title requests strip reasoning_effort before forwarding', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      temperature: 0.5,
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title. Nothing else.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+  assert.equal(forwardedBody.temperature, 0.5);
+});
+
+test('claude non-title requests keep reasoning_effort before forwarding', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-sonnet-4-6',
+      temperature: 1,
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'user',
+          content: 'Explain this bug.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, 'low');
+  assert.equal(forwardedBody.temperature, 1);
+});
+
 test('gemini schema sanitization applies to responses endpoint request objects', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;
