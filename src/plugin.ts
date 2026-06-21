@@ -102,9 +102,10 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       setRawUserModelMetadata(providerOptions, rawUserModelMetadata);
 
       const shouldRefreshModels = shouldRefreshProviderModels(existingProvider);
+      const modelNameDisplay = getModelNameDisplay(existingProvider?.options);
       const providerModels = shouldRefreshModels
-        ? toProviderModels(effectiveModels, baseUrl, providerNpm)
-        : reconcileExplicitModelsNpm(existingProvider?.models, providerNpm);
+        ? toProviderModels(effectiveModels, baseUrl, providerNpm, modelNameDisplay)
+        : reconcileExplicitModels(existingProvider?.models, providerNpm, modelNameDisplay);
       setModelsGeneratedByPlugin(providerOptions, shouldRefreshModels);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
@@ -123,11 +124,11 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
     provider: {
       id: OMNIROUTE_PROVIDER_ID,
       models: async (provider, ctx) => {
-      const baseUrl = getBaseUrl(provider.options);
-      const providerNpm = resolveProviderNpm(
-        isRecord(provider) ? provider.npm : undefined,
-        isRecord(provider) ? getApiMode(provider.options) : 'chat',
-      );
+        const baseUrl = getBaseUrl(provider.options);
+        const providerNpm = resolveProviderNpm(
+          isRecord(provider) ? provider.npm : undefined,
+          isRecord(provider) ? getApiMode(provider.options) : 'chat',
+        );
 
         // Auth available — fetch /v1/models (fetchModels falls back to defaults on error)
         if (ctx.auth?.type === 'api' && ctx.auth.key) {
@@ -137,7 +138,12 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
             models,
             getRawUserModelMetadata(provider.options),
           );
-          return toProviderModels(effectiveModels, baseUrl, providerNpm);
+          return toProviderModels(
+            effectiveModels,
+            baseUrl,
+            providerNpm,
+            runtimeConfig.modelNameDisplay,
+          );
         }
 
         // No auth yet (user hasn't /connect'd): return built-in defaults.
@@ -146,7 +152,12 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
           OMNIROUTE_DEFAULT_MODELS,
           getRawUserModelMetadata(provider.options),
         );
-        return toProviderModels(effectiveModels, baseUrl, providerNpm);
+        return toProviderModels(
+          effectiveModels,
+          baseUrl,
+          providerNpm,
+          getModelNameDisplay(provider.options),
+        );
       },
     },
     auth: createAuthHook(),
@@ -196,7 +207,7 @@ async function loadProviderOptions(
   const providerNpm = resolveProviderNpm(provider.npm, config.apiMode);
   replaceProviderModels(
     provider,
-    toProviderModels(effectiveModels, config.baseUrl, providerNpm),
+    toProviderModels(effectiveModels, config.baseUrl, providerNpm, config.modelNameDisplay),
   );
   if (isRecord(provider.models)) {
     debug(`Provider models hydrated: ${Object.keys(provider.models).length}`);
@@ -218,6 +229,7 @@ function createRuntimeConfig(
   const refreshOnList = getBoolean(options, 'refreshOnList');
   const modelsDev = getModelsDevConfig(options);
   const modelMetadata = getModelMetadataConfig(options);
+  const modelNameDisplay = getModelNameDisplay(options);
 
   return {
     baseUrl,
@@ -227,6 +239,7 @@ function createRuntimeConfig(
     refreshOnList,
     modelsDev,
     modelMetadata,
+    modelNameDisplay,
   };
 }
 
@@ -357,6 +370,19 @@ function getBoolean(
   const value = options?.[key];
   if (typeof value === 'boolean') {
     return value;
+  }
+  return undefined;
+}
+
+function getModelNameDisplay(
+  options: Record<string, unknown> | undefined,
+): 'name' | 'id' | undefined {
+  const value = options?.modelNameDisplay;
+  if (value === 'name' || value === 'id') {
+    return value;
+  }
+  if (value !== undefined) {
+    warn(`Unsupported modelNameDisplay option: ${sanitizeForLog(String(value))}. Using name.`);
   }
   return undefined;
 }
@@ -502,30 +528,43 @@ function isGeneratedOmniRouteProviderModel(value: unknown): boolean {
   return typeof value.api.npm === 'string' && isOmniRouteProviderNpm(value.api.npm);
 }
 
-function reconcileExplicitModelsNpm(
+function reconcileExplicitModels(
   models: Record<string, unknown> | undefined,
   providerNpm: string,
+  modelNameDisplay?: 'name' | 'id',
 ): Record<string, unknown> | undefined {
   if (!isRecord(models)) return models;
   let changed = false;
   const next: Record<string, unknown> = {};
   for (const [id, model] of Object.entries(models)) {
-    if (!isRecord(model) || !isRecord(model.api)) {
+    if (!isRecord(model)) {
       next[id] = model;
       continue;
     }
-    if (model.api.npm === providerNpm) {
-      next[id] = model;
-      continue;
+
+    let updatedModel = model;
+    if (isRecord(model.api) && model.api.npm !== providerNpm) {
+      updatedModel = {
+        ...updatedModel,
+        api: {
+          ...model.api,
+          npm: providerNpm,
+        },
+      };
     }
-    changed = true;
-    next[id] = {
-      ...model,
-      api: {
-        ...model.api,
-        npm: providerNpm,
-      },
-    };
+
+    const expectedName = modelNameDisplay === 'id' ? id : (model.name ?? id);
+    if (typeof model.name === 'string' ? model.name !== expectedName : modelNameDisplay === 'id') {
+      updatedModel = {
+        ...updatedModel,
+        name: expectedName,
+      };
+    }
+
+    if (updatedModel !== model) {
+      changed = true;
+    }
+    next[id] = updatedModel;
   }
   return changed ? next : models;
 }
@@ -836,10 +875,11 @@ function toProviderModels(
   models: OmniRouteModel[],
   baseUrl: string,
   providerNpm: string,
+  modelNameDisplay?: 'name' | 'id',
 ): Record<string, OmniRouteProviderModel> {
   const entries: Array<[string, OmniRouteProviderModel]> = models.map((model) => [
     model.id,
-    toProviderModel(model, baseUrl, providerNpm),
+    toProviderModel(model, baseUrl, providerNpm, modelNameDisplay),
   ]);
   return Object.fromEntries(entries);
 }
@@ -848,8 +888,8 @@ function toProviderModel(
   model: OmniRouteModel,
   baseUrl: string,
   providerNpm: string,
+  modelNameDisplay?: 'name' | 'id',
 ): OmniRouteProviderModel {
-  const supportsVision = model.supportsVision === true;
   // Default to true: if API doesn't explicitly say no tools, assume capability exists
   // This aligns with OpenAI-compatible behavior where most models support tools
   const supportsTools = model.supportsTools !== false;
@@ -859,7 +899,7 @@ function toProviderModel(
 
   return {
     id: model.id,
-    name: model.name || model.id,
+    name: modelNameDisplay === 'id' ? model.id : (model.name || model.id),
     providerID: OMNIROUTE_PROVIDER_ID,
     family: getModelFamily(model.id),
     release_date: '',

@@ -2169,3 +2169,130 @@ test('provider hook creates synthetic base model when only variants are returned
   assert.equal(result['codex/gpt-5.5-high'], undefined);
   assert.equal(result['codex/gpt-5.5-xhigh'], undefined);
 });
+
+test('provider hook uses model id as display name when modelNameDisplay is "id"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gh/gpt-5.5', name: 'GPT-5.5' },
+            { id: 'cx/gpt-5.5', name: 'GPT-5.5' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat', modelNameDisplay: 'id' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  // Plugin remaps aliases to canonical keys (gh→github, cx→codex)
+  // With modelNameDisplay:'id' the name field reflects the canonical id
+  assert.ok(result['github/gpt-5.5'] || result['gh/gpt-5.5'], 'expected github/gpt-5.5 entry');
+  assert.ok(result['codex/gpt-5.5'] || result['cx/gpt-5.5'], 'expected codex/gpt-5.5 entry');
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  const cxEntry = result['codex/gpt-5.5'] ?? result['cx/gpt-5.5'];
+  // name should equal the model's id (not the human-readable display name)
+  assert.equal(ghEntry.name, ghEntry.id);
+  assert.equal(cxEntry.name, cxEntry.id);
+});
+
+test('provider hook uses model name as display name by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gh/gpt-5.5', name: 'GPT-5.5' },
+            { id: 'cx/gpt-5.5', name: 'GPT-5.5' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  // Default: display name is the name field from /v1/models (not the id)
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
+  assert.equal(ghEntry.name, 'GPT-5.5');
+  assert.notEqual(ghEntry.name, ghEntry.id);
+});
+
+test('provider hook warns and falls back for invalid modelNameDisplay', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gh/gpt-5.5', name: 'GPT-5.5' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      // invalid value — should fall back to 'name' mode
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat', modelNameDisplay: 'invalid' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  // Falls back to 'name' mode on invalid value
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
+  assert.equal(ghEntry.name, 'GPT-5.5');
+});
