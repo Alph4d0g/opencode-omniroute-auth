@@ -806,6 +806,321 @@ test('claude non-title requests keep reasoning_effort before forwarding', async 
   assert.equal(forwardedBody.temperature, 1);
 });
 
+test('claude title requests strip reasoning_effort from instructions field', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      temperature: 0.5,
+      reasoning_effort: 'low',
+      instructions: 'You are a title generator. You output ONLY a thread title.',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+  assert.equal(forwardedBody.temperature, 0.5);
+});
+
+test('claude title requests strip reasoning_effort from input array', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/responses`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      input: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests strip reasoning_effort from top-level system field', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      system: 'You are a title generator. You output ONLY a thread title.',
+      messages: [{ role: 'user', content: 'Hi' }],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests detect title markers case-insensitively', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: [
+            { type: 'text', text: 'you are a title generator' },
+            { type: 'text', text: 'output a thread title' },
+          ],
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests strip camelCase reasoningEffort', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'anthropic/claude-haiku-4-5-20251001',
+      reasoningEffort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningEffort, undefined);
+});
+
+test('non-claude title requests keep reasoning_effort before forwarding', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'openai/gpt-4.1-mini',
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, 'low');
+});
+
+test('non-claude payloads are not re-stringified unnecessarily', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let rawBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    rawBody = typeof init?.body === 'string' ? init.body : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  const originalBody = JSON.stringify({
+    model: 'openai/gpt-4.1-mini',
+    temperature: 1,
+    reasoning_effort: 'low',
+    messages: [{ role: 'user', content: 'Explain this bug.' }],
+  });
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: originalBody,
+  });
+
+  assert.equal(rawBody, originalBody);
+});
+
 test('gemini schema sanitization applies to responses endpoint request objects', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   let forwardedBody;

@@ -1132,7 +1132,7 @@ function cloneMutableResponseHeaders(headers: Headers): Headers {
 
 const GEMINI_SCHEMA_KEYS_TO_REMOVE = new Set(['$schema', '$ref', 'ref', 'additionalProperties']);
 const TITLE_PROMPT_REQUIRED_MARKERS = [
-  'You are a title generator',
+  'you are a title generator',
   'thread title',
 ];
 
@@ -1153,7 +1153,8 @@ async function sanitizeRequestPayload(
   let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
-  } catch {
+  } catch (error) {
+    warn(`Failed to parse request body as JSON; forwarding unchanged: ${sanitizeForLog(String(error))}`);
     return undefined;
   }
 
@@ -1161,18 +1162,23 @@ async function sanitizeRequestPayload(
     return undefined;
   }
 
-  const clonedPayload = structuredClone(payload);
+  const mayMutate = isClaudeModel(payload.model) || isGeminiModel(payload.model);
+  const workingPayload = mayMutate ? structuredClone(payload) : payload;
   let changed = false;
 
-  changed = stripClaudeTitleReasoningEffort(clonedPayload) || changed;
-  changed = sanitizeGeminiToolSchemas(clonedPayload) || changed;
+  changed = stripClaudeTitleReasoningEffort(workingPayload) || changed;
+  changed = sanitizeGeminiToolSchemas(workingPayload) || changed;
 
-  return changed ? JSON.stringify(clonedPayload) : undefined;
+  return changed ? JSON.stringify(workingPayload) : undefined;
 }
 
 function stripClaudeTitleReasoningEffort(payload: Record<string, unknown>): boolean {
   const model = payload.model;
-  if (!isClaudeModel(model) || !isOpenCodeTitlePrompt(payload)) {
+  if (!isClaudeModel(model)) {
+    return false;
+  }
+  if (!isOpenCodeTitlePrompt(payload)) {
+    debug('Claude request detected but title markers not found; preserving reasoning effort');
     return false;
   }
 
@@ -1196,17 +1202,21 @@ function stripClaudeTitleReasoningEffort(payload: Record<string, unknown>): bool
 function isClaudeModel(model: unknown): boolean {
   if (typeof model !== 'string') return false;
   const lower = model.toLowerCase();
-  return (
-    lower.startsWith('claude/') ||
-    lower.startsWith('claude-') ||
-    lower.startsWith('anthropic/') ||
-    lower.startsWith('anthropic:') ||
-    lower.includes('/claude-')
-  );
+  // OmniRoute canonical aliases: claude/<model> and anthropic/<model>
+  if (lower.startsWith('claude/') || lower.startsWith('anthropic/')) return true;
+  // Provider-prefixed IDs where the provider slug ends with the model family,
+  // e.g. aws/us-claude-sonnet-4-6 or openrouter/claude-3-5-sonnet
+  if (/\bclaude[-/]/.test(lower)) return true;
+  return false;
+}
+
+function isGeminiModel(model: unknown): boolean {
+  return typeof model === 'string' && model.toLowerCase().includes('gemini');
 }
 
 function isOpenCodeTitlePrompt(payload: Record<string, unknown>): boolean {
   if (contentContainsTitlePrompt(payload.instructions)) return true;
+  if (contentContainsTitlePrompt(payload.system)) return true;
 
   const messages = payload.messages;
   if (Array.isArray(messages)) {
@@ -1230,14 +1240,18 @@ function isOpenCodeTitlePrompt(payload: Record<string, unknown>): boolean {
 function contentContainsTitlePrompt(content: unknown): boolean {
   const text = contentToText(content);
   if (!text) return false;
-  return TITLE_PROMPT_REQUIRED_MARKERS.every((marker) => text.includes(marker));
+  const normalized = text.toLowerCase();
+  return TITLE_PROMPT_REQUIRED_MARKERS.every((marker) => normalized.includes(marker));
 }
 
-function contentToText(content: unknown): string {
+const MAX_CONTENT_DEPTH = 10;
+
+function contentToText(content: unknown, depth = 0): string {
+  if (depth > MAX_CONTENT_DEPTH) return '';
   if (typeof content === 'string') return content;
 
   if (Array.isArray(content)) {
-    return content.map(contentToText).filter(Boolean).join('\n');
+    return content.map((item) => contentToText(item, depth + 1)).filter(Boolean).join('\n');
   }
 
   if (!isRecord(content)) return '';
@@ -1246,13 +1260,17 @@ function contentToText(content: unknown): string {
   const value = content.value;
   if (typeof value === 'string') return value;
   const contentValue = content.content;
-  if (contentValue !== undefined) return contentToText(contentValue);
+  if (contentValue !== undefined) return contentToText(contentValue, depth + 1);
   return '';
 }
 
+/**
+ * Sanitizes Gemini tool schemas in place.
+ * Mutates `payload` and returns `true` if any keys were removed.
+ */
 function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {
   const model = payload.model;
-  if (typeof model !== 'string' || !model.toLowerCase().includes('gemini')) {
+  if (!isGeminiModel(model)) {
     return false;
   }
 
