@@ -1,8 +1,19 @@
+import { mkdirSync, writeFileSync, utimesSync } from 'fs';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, rm } from 'fs/promises';
+import { mkdir, writeFile, readFile, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
+
+// Isolate logger output for plugin tests so warning assertions can read the log file.
+const PLUGIN_TEST_DATA_HOME = join(tmpdir(), `opencode-plugin-tests-${Date.now()}`);
+process.env.XDG_DATA_HOME = PLUGIN_TEST_DATA_HOME;
+const PLUGIN_LOG_DIR = join(PLUGIN_TEST_DATA_HOME, 'opencode', 'log');
+const PLUGIN_LOG_FILE = join(PLUGIN_LOG_DIR, 'omniroute.log');
+mkdirSync(PLUGIN_LOG_DIR, { recursive: true });
+writeFileSync(PLUGIN_LOG_FILE, '');
+// Ensure this file wins mtime races against any previously-created test logs.
+utimesSync(PLUGIN_LOG_FILE, Date.now() / 1000, (Date.now() / 1000) + 1000);
 
 import OmniRouteAuthPlugin from '../dist/index.js';
 import { clearModelCache } from '../dist/runtime.js';
@@ -56,6 +67,7 @@ async function createTempAuthHome(auth = { omniroute: { type: 'api', key: 'test-
 
 test('config hook applies defaults and normalized apiMode', async () => {
   const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
   const config = {
     provider: {
       omniroute: {
@@ -72,6 +84,172 @@ test('config hook applies defaults and normalized apiMode', async () => {
   assert.equal(config.provider.omniroute.api, 'chat');
   assert.equal(config.provider.omniroute.options.apiMode, 'chat');
   assert.equal(config.provider.omniroute.options.baseURL, 'http://localhost:20128/v1');
+});
+
+test('config hook selects provider package for chat apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'chat',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.api, 'chat');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai-compatible');
+});
+
+test('config hook selects provider package for responses apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        npm: '@ai-sdk/openai-compatible',
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'responses',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.api, 'responses');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
+});
+
+test('provider hook selects model package for responses apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      npm: '@ai-sdk/openai-compatible',
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+      models: {},
+    },
+    { auth: undefined },
+  );
+
+  assert.equal(result['gpt-4o'].api.npm, '@ai-sdk/openai');
+});
+
+test('provider hook preserves custom provider package', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      npm: 'custom-ai-sdk-provider',
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+      models: {},
+    },
+    { auth: undefined },
+  );
+
+  assert.equal(result['gpt-4o'].api.npm, 'custom-ai-sdk-provider');
+});
+
+test('config hook reconciles explicit model npm when provider package changes', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        npm: '@ai-sdk/openai-compatible',
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'responses',
+        },
+        models: {
+          'gpt-4o': {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            providerID: 'omniroute',
+            api: { id: 'gpt-4o', url: getDummyBaseUrl(), npm: '@ai-sdk/openai-compatible' },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
+});
+
+test('auth loader selects provider package for responses apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.equal(provider.models['gpt-4.1-mini'].api.npm, '@ai-sdk/openai');
+});
+
+test('config hook refreshes legacy-generated models with responses npm', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        api: 'responses',
+        npm: '@ai-sdk/openai',
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'responses',
+        },
+        models: {
+          'gpt-4o': {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            providerID: 'omniroute',
+            api: { id: 'gpt-4o', url: getDummyBaseUrl(), npm: '@ai-sdk/openai' },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
 });
 
 test('loader injects auth headers only for OmniRoute URLs', async () => {
