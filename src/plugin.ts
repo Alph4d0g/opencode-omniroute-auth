@@ -969,7 +969,7 @@ function createFetchInterceptor(
     headers.set('Authorization', `Bearer ${config.apiKey}`);
     headers.set('Content-Type', 'application/json');
 
-    const sanitizedBody = await sanitizeGeminiToolSchemas(input, init, url);
+    const sanitizedBody = await sanitizeRequestPayload(input, init, url);
 
     // Clone init to avoid mutating original
     const modifiedInit: RequestInit = {
@@ -1131,8 +1131,12 @@ function cloneMutableResponseHeaders(headers: Headers): Headers {
 }
 
 const GEMINI_SCHEMA_KEYS_TO_REMOVE = new Set(['$schema', '$ref', 'ref', 'additionalProperties']);
+const TITLE_PROMPT_REQUIRED_MARKERS = [
+  'you are a title generator',
+  'thread title',
+];
 
-async function sanitizeGeminiToolSchemas(
+async function sanitizeRequestPayload(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   url: string,
@@ -1149,7 +1153,8 @@ async function sanitizeGeminiToolSchemas(
   let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
-  } catch {
+  } catch (error) {
+    warn(`Failed to parse request body as JSON; forwarding unchanged: ${sanitizeForLog(String(error))}`);
     return undefined;
   }
 
@@ -1157,24 +1162,128 @@ async function sanitizeGeminiToolSchemas(
     return undefined;
   }
 
+  const mayMutate = isClaudeModel(payload.model) || isGeminiModel(payload.model);
+  const workingPayload = mayMutate ? structuredClone(payload) : payload;
+  let changed = false;
+
+  changed = stripClaudeTitleReasoningEffort(workingPayload) || changed;
+  changed = sanitizeGeminiToolSchemas(workingPayload) || changed;
+
+  return changed ? JSON.stringify(workingPayload) : undefined;
+}
+
+function stripClaudeTitleReasoningEffort(payload: Record<string, unknown>): boolean {
   const model = payload.model;
-  if (typeof model !== 'string' || !model.toLowerCase().includes('gemini')) {
-    return undefined;
+  if (!isClaudeModel(model)) {
+    return false;
+  }
+  if (!isOpenCodeTitlePrompt(payload)) {
+    debug('Claude request detected but title markers not found; preserving reasoning effort');
+    return false;
+  }
+
+  let changed = false;
+  if ('reasoning_effort' in payload) {
+    delete payload.reasoning_effort;
+    changed = true;
+  }
+  if ('reasoningEffort' in payload) {
+    delete payload.reasoningEffort;
+    changed = true;
+  }
+
+  if (changed) {
+    debug('Removed reasoning effort from Claude title request');
+  }
+
+  return changed;
+}
+
+function isClaudeModel(model: unknown): boolean {
+  if (typeof model !== 'string') return false;
+  const lower = model.toLowerCase();
+  // OmniRoute canonical aliases: claude/<model> and anthropic/<model>
+  if (lower.startsWith('claude/') || lower.startsWith('anthropic/')) return true;
+  // Provider-prefixed IDs where the provider slug ends with the model family,
+  // e.g. aws/us-claude-sonnet-4-6 or openrouter/claude-3-5-sonnet
+  if (/\bclaude[-/]/.test(lower)) return true;
+  return false;
+}
+
+function isGeminiModel(model: unknown): boolean {
+  return typeof model === 'string' && model.toLowerCase().includes('gemini');
+}
+
+function isOpenCodeTitlePrompt(payload: Record<string, unknown>): boolean {
+  if (contentContainsTitlePrompt(payload.instructions)) return true;
+  if (contentContainsTitlePrompt(payload.system)) return true;
+
+  const messages = payload.messages;
+  if (Array.isArray(messages)) {
+    return messages.some((message) => {
+      if (!isRecord(message) || message.role !== 'system') return false;
+      return contentContainsTitlePrompt(message.content);
+    });
+  }
+
+  const input = payload.input;
+  if (Array.isArray(input)) {
+    return input.some((item) => {
+      if (!isRecord(item) || item.role !== 'system') return false;
+      return contentContainsTitlePrompt(item.content);
+    });
+  }
+
+  return false;
+}
+
+function contentContainsTitlePrompt(content: unknown): boolean {
+  const text = contentToText(content);
+  if (!text) return false;
+  const normalized = text.toLowerCase();
+  return TITLE_PROMPT_REQUIRED_MARKERS.every((marker) => normalized.includes(marker));
+}
+
+const MAX_CONTENT_DEPTH = 10;
+
+function contentToText(content: unknown, depth = 0): string {
+  if (depth > MAX_CONTENT_DEPTH) return '';
+  if (typeof content === 'string') return content;
+
+  if (Array.isArray(content)) {
+    return content.map((item) => contentToText(item, depth + 1)).filter(Boolean).join('\n');
+  }
+
+  if (!isRecord(content)) return '';
+  const text = content.text;
+  if (typeof text === 'string') return text;
+  const value = content.value;
+  if (typeof value === 'string') return value;
+  const contentValue = content.content;
+  if (contentValue !== undefined) return contentToText(contentValue, depth + 1);
+  return '';
+}
+
+/**
+ * Sanitizes Gemini tool schemas in place.
+ * Mutates `payload` and returns `true` if any keys were removed.
+ */
+function sanitizeGeminiToolSchemas(payload: Record<string, unknown>): boolean {
+  const model = payload.model;
+  if (!isGeminiModel(model)) {
+    return false;
   }
 
   const tools = payload.tools;
   if (!Array.isArray(tools) || tools.length === 0) {
-    return undefined;
+    return false;
   }
 
-  const clonedPayload = structuredClone(payload);
-  const changed = sanitizeToolSchemaContainer(clonedPayload);
-  if (!changed) {
-    return undefined;
+  const changed = sanitizeToolSchemaContainer(payload);
+  if (changed) {
+    debug('Sanitized Gemini tool schema keywords');
   }
-
-  debug('Sanitized Gemini tool schema keywords');
-  return JSON.stringify(clonedPayload);
+  return changed;
 }
 
 async function getRawJsonBody(
