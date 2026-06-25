@@ -15,6 +15,8 @@ All notable changes to this project are documented in this file.
 - **Exclude cached tokens from chat usage** — `prompt_tokens` and `total_tokens` in `/chat/completions` responses now exclude `prompt_tokens_details.cached_tokens`, matching OpenCode's separate cached-input accounting. Applies to both JSON and streaming responses. (`src/plugin.ts`) (@makcimbx)
 - **Use `@ai-sdk/openai` for responses mode** — When `apiMode` is `responses`, the plugin now selects `@ai-sdk/openai` as the provider package instead of `@ai-sdk/openai-compatible`, and reconciles explicit model `api.npm` values when the provider package changes. (`src/plugin.ts`) (@makcimbx)
 - **Strip Claude title reasoning effort** — The fetch interceptor now removes `reasoning_effort`/`reasoningEffort` from identified Claude title-generation requests, avoiding Anthropic OAuth temperature/thinking validation errors while preserving reasoning options for normal Claude chat requests. (`src/plugin.ts`) (@thomasmaerz)
+- **Fix SSE newline boundary corruption** — Corrected `normalizeSseChatUsageResponse` so `\r\n` sequences split across stream chunks no longer inject spurious empty lines into the event stream. (`src/plugin.ts`)
+- **Fix Claude title prompt detection short-circuit** — `isOpenCodeTitlePrompt` now checks `payload.input` even when `payload.messages` is present but does not contain the title prompt. (`src/plugin.ts`)
 
 ## [1.2.2] - 2026-05-22
 

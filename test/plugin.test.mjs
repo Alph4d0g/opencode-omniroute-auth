@@ -551,6 +551,55 @@ test('chat completion streaming passes through content-only chunks unchanged', a
   assert.ok(text.includes('data: [DONE]'));
 });
 
+test('chat completion streaming preserves CRLF boundaries split across chunks', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const encoder = new TextEncoder();
+    // Split a CRLF across two chunks: first chunk ends with '\r', second starts with '\n'
+    const chunk1 = encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\r');
+    const chunk2 = encoder.encode('\ndata: [DONE]');
+
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk1);
+          controller.enqueue(chunk2);
+          controller.close();
+        },
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      },
+    );
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [], stream: true }),
+  });
+  const text = await response.text();
+
+  // Should not inject an empty line between the data event and [DONE]
+  assert.ok(text.includes('data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\ndata: [DONE]'));
+  assert.ok(!text.includes('\n\n\ndata: [DONE]'), 'should not produce extra blank lines');
+});
+
 test('auth loader applies user modelMetadata override to provider models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 
@@ -882,6 +931,53 @@ test('claude title requests strip reasoning_effort from input array', async () =
     body: JSON.stringify({
       model: 'claude/claude-haiku-4-5-20251001',
       reasoning_effort: 'low',
+      input: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests strip reasoning_effort when messages lacks title but input has it', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/responses`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      messages: [{ role: 'user', content: 'Hi' }],
       input: [
         {
           role: 'system',

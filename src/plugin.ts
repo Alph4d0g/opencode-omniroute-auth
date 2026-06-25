@@ -1160,17 +1160,22 @@ function normalizeSseChatUsageResponse(response: Response): Response {
   const stream = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       pending += decoder.decode(chunk, { stream: true });
-      pending = pending.replace(/\r\n?/g, '\n');
       const lines = pending.split('\n');
       pending = lines.pop() ?? '';
 
-      for (const line of lines) {
+      for (let line of lines) {
+        if (line.endsWith('\r')) {
+          line = line.slice(0, -1);
+        }
         controller.enqueue(encoder.encode(`${normalizeSseChatUsageLine(line)}\n`));
       }
     },
     flush(controller) {
-      const tail = (pending + decoder.decode()).replace(/\r\n?/g, '\n');
+      let tail = pending + decoder.decode();
       if (tail) {
+        if (tail.endsWith('\r')) {
+          tail = tail.slice(0, -1);
+        }
         controller.enqueue(encoder.encode(`${normalizeSseChatUsageLine(tail)}\n`));
       }
     },
@@ -1339,18 +1344,20 @@ function isOpenCodeTitlePrompt(payload: Record<string, unknown>): boolean {
 
   const messages = payload.messages;
   if (Array.isArray(messages)) {
-    return messages.some((message) => {
+    const hasTitlePrompt = messages.some((message) => {
       if (!isRecord(message) || message.role !== 'system') return false;
       return contentContainsTitlePrompt(message.content);
     });
+    if (hasTitlePrompt) return true;
   }
 
   const input = payload.input;
   if (Array.isArray(input)) {
-    return input.some((item) => {
+    const hasTitlePrompt = input.some((item) => {
       if (!isRecord(item) || item.role !== 'system') return false;
       return contentContainsTitlePrompt(item.content);
     });
+    if (hasTitlePrompt) return true;
   }
 
   return false;
