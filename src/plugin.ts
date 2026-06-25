@@ -104,7 +104,7 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
       const shouldRefreshModels = shouldRefreshProviderModels(existingProvider);
       const providerModels = shouldRefreshModels
         ? toProviderModels(effectiveModels, baseUrl, providerNpm)
-        : existingProvider?.models;
+        : reconcileExplicitModelsNpm(existingProvider?.models, providerNpm);
       setModelsGeneratedByPlugin(providerOptions, shouldRefreshModels);
 
       providers[OMNIROUTE_PROVIDER_ID] = {
@@ -123,11 +123,11 @@ export const OmniRouteAuthPlugin: Plugin = async (_input) => {
     provider: {
       id: OMNIROUTE_PROVIDER_ID,
       models: async (provider, ctx) => {
-        const baseUrl = getBaseUrl(provider.options);
-        const providerNpm = resolveProviderNpm(
-          isRecord(provider) ? provider.npm : undefined,
-          getApiMode(provider.options),
-        );
+      const baseUrl = getBaseUrl(provider.options);
+      const providerNpm = resolveProviderNpm(
+        isRecord(provider) ? provider.npm : undefined,
+        isRecord(provider) ? getApiMode(provider.options) : 'chat',
+      );
 
         // Auth available — fetch /v1/models (fetchModels falls back to defaults on error)
         if (ctx.auth?.type === 'api' && ctx.auth.key) {
@@ -194,7 +194,10 @@ async function loadProviderOptions(
     getRawUserModelMetadata(provider.options),
   );
   const providerNpm = resolveProviderNpm(provider.npm, config.apiMode);
-  replaceProviderModels(provider, toProviderModels(effectiveModels, config.baseUrl, providerNpm));
+  replaceProviderModels(
+    provider,
+    toProviderModels(effectiveModels, config.baseUrl, providerNpm),
+  );
   if (isRecord(provider.models)) {
     debug(`Provider models hydrated: ${Object.keys(provider.models).length}`);
   }
@@ -275,7 +278,10 @@ function resolveProviderNpm(npm: unknown, apiMode: OmniRouteApiMode): string {
   }
 
   if (current !== expected) {
-    warn(`provider.npm (${sanitizeForLog(current)}) and options.apiMode (${sanitizeForLog(apiMode)}) differ; using ${sanitizeForLog(expected)}.`);
+    warn(
+      `provider.npm (${sanitizeForLog(current)}) and options.apiMode (${sanitizeForLog(apiMode)}) ` +
+        `differ; using ${sanitizeForLog(expected)}.`,
+    );
   }
   return expected;
 }
@@ -494,6 +500,34 @@ function isGeneratedOmniRouteProviderModel(value: unknown): boolean {
   if (value.providerID !== OMNIROUTE_PROVIDER_ID) return false;
   if (!isRecord(value.api)) return false;
   return typeof value.api.npm === 'string' && isOmniRouteProviderNpm(value.api.npm);
+}
+
+function reconcileExplicitModelsNpm(
+  models: Record<string, unknown> | undefined,
+  providerNpm: string,
+): Record<string, unknown> | undefined {
+  if (!isRecord(models)) return models;
+  let changed = false;
+  const next: Record<string, unknown> = {};
+  for (const [id, model] of Object.entries(models)) {
+    if (!isRecord(model) || !isRecord(model.api)) {
+      next[id] = model;
+      continue;
+    }
+    if (model.api.npm === providerNpm) {
+      next[id] = model;
+      continue;
+    }
+    changed = true;
+    next[id] = {
+      ...model,
+      api: {
+        ...model.api,
+        npm: providerNpm,
+      },
+    };
+  }
+  return changed ? next : models;
 }
 
 function getStringRecord(value: unknown): Record<string, string> | undefined {
