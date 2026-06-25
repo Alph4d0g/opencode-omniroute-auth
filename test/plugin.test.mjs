@@ -179,7 +179,13 @@ test('chat completion excludes cached tokens from JSON prompt tokens', async () 
 test('chat completion excludes cached tokens from streaming prompt tokens', async () => {
   const plugin = await OmniRouteAuthPlugin({});
   const contentChunk = 'data: {"choices":[{"delta":{"content":"hi"},"index":0}]}';
-  const usageChunk = 'data: {"choices":[],"usage":{"prompt_tokens":39493,"completion_tokens":185,"total_tokens":39678,"prompt_tokens_details":{"cached_tokens":36864}}}';
+  const usageChunk = [
+    'data: {"choices":[],"usage":{',
+    '"prompt_tokens":39493,',
+    '"completion_tokens":185,',
+    '"total_tokens":39678,',
+    '"prompt_tokens_details":{"cached_tokens":36864}}}',
+  ].join('');
 
   global.fetch = async (input) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -219,6 +225,152 @@ test('chat completion excludes cached tokens from streaming prompt tokens', asyn
   assert.equal(normalized.usage.completion_tokens, 185);
   assert.equal(normalized.usage.total_tokens, 2814);
   assert.equal(normalized.usage.prompt_tokens_details.cached_tokens, 36864);
+});
+
+test('chat completion leaves JSON prompt tokens unchanged when cached_tokens is zero', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-test',
+        object: 'chat.completion',
+        choices: [],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 10,
+          total_tokens: 110,
+          prompt_tokens_details: { cached_tokens: 0 },
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+  const body = await response.json();
+
+  assert.equal(body.usage.prompt_tokens, 100);
+  assert.equal(body.usage.total_tokens, 110);
+});
+
+test('chat completion passes through non-OK responses unchanged', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({ error: 'bad request' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error, 'bad request');
+});
+
+test('chat completion passes through malformed JSON unchanged', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('not valid json', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+  const text = await response.text();
+
+  assert.equal(text, 'not valid json');
+});
+
+test('chat completion streaming passes through content-only chunks unchanged', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const contentChunk = 'data: {"choices":[{"delta":{"content":"hi"},"index":0}]}';
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(`${contentChunk}\n\ndata: [DONE]`, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [], stream: true }),
+  });
+  const text = await response.text();
+
+  assert.ok(text.includes(contentChunk));
+  assert.ok(text.includes('data: [DONE]'));
 });
 
 test('auth loader applies user modelMetadata override to provider models', async () => {
