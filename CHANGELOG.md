@@ -7,7 +7,7 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - **`modelNameDisplay` option** — New `OmniRouteConfig` option that controls how model names appear in the model picker. Set to `"id"` to show provider-qualified model IDs (e.g. `gh/gpt-5.5`) instead of human-readable names, which disambiguates entries when multiple providers serve the same base model. (`src/plugin.ts`, `src/types.ts`) (@Rahulsharma0810)
-- **`modelNameDisplay: "prefixed"` and `hideModelAliases`** — Extended `modelNameDisplay` with a `"prefixed"` mode that renders model names as `${provider} / ${name}` (e.g. `"OpenCode / Big Pickle"`) using a provider label map, and added `hideModelAliases` to filter out alias models that have a `parent` field in `/v1/models`. (`src/plugin.ts`, `src/models.ts`, `src/types.ts`, `src/constants.ts`)
+- **`modelNameDisplay: "prefixed"` and `hideModelAliases`** — Extended the `modelNameDisplay` option with a `"prefixed"` mode that renders model names as `${provider} / ${name}` (e.g. `"OpenCode / Big Pickle"`) using a provider label map, and added `hideModelAliases` to filter out alias models that have a `parent` field in `/v1/models`. (`src/plugin.ts`, `src/models.ts`, `src/types.ts`, `src/constants.ts`)
 
 ### Fixed
 
