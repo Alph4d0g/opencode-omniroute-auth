@@ -23,6 +23,11 @@ export interface OmniRouteModel {
   vision?: boolean;
   tool_calling?: boolean;
 
+  // OpenAI-compatible model metadata fields used by OmniRoute
+  owned_by?: string;
+  root?: string;
+  parent?: string | null;
+
   // OmniRoute capabilities object
   capabilities?: {
     vision?: boolean;
@@ -139,8 +144,13 @@ export interface OmniRouteConfig {
    *   `"cx/gpt-5.5"`). Always unique per entry — useful when multiple
    *   providers serve the same model or when OmniRoute name disambiguation
    *   is not enabled.
+   * - `"prefixed"`: prefix the human-readable `name` with the provider
+   *   origin (e.g. `"OpenCode Free / Big Pickle"`). Combines readability
+   *   with disambiguation.
    */
-  modelNameDisplay?: 'name' | 'id';
+  modelNameDisplay?: 'name' | 'id' | 'prefixed';
+  /** Hide alias models that have a `parent` field in `/v1/models`. */
+  hideModelAliases?: boolean;
 }
 
 export interface OmniRouteProviderModelModalities {

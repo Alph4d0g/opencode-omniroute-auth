@@ -2409,3 +2409,200 @@ test('modelNameDisplay falls back to id when name is empty', async () => {
   assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
   assert.equal(ghEntry.name, 'gh/gpt-5.5');
 });
+
+test('provider hook prefixes model names with provider origin when modelNameDisplay is "prefixed"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'oc/big-pickle', name: 'Big Pickle', owned_by: 'opencode', parent: null },
+            {
+              id: 'opencode/big-pickle',
+              name: 'Big Pickle',
+              owned_by: 'opencode',
+              parent: 'oc/big-pickle',
+            },
+            {
+              id: 'oc/deepseek-v4-flash-free',
+              name: 'DeepSeek V4 Flash Free',
+              owned_by: 'opencode',
+              parent: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        modelNameDisplay: 'prefixed',
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  assert.ok(result['oc/big-pickle'], 'expected oc/big-pickle entry');
+  assert.ok(result['opencode/big-pickle'], 'expected opencode/big-pickle entry');
+  assert.equal(result['oc/big-pickle'].name, 'OpenCode Free / Big Pickle');
+  assert.equal(result['opencode/big-pickle'].name, 'OpenCode / Big Pickle');
+  assert.equal(
+    result['oc/deepseek-v4-flash-free'].name,
+    'OpenCode Free / DeepSeek V4 Flash Free',
+  );
+});
+
+test('provider hook hides alias models when hideModelAliases is true', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'oc/big-pickle', name: 'Big Pickle', owned_by: 'opencode', parent: null },
+            {
+              id: 'opencode/big-pickle',
+              name: 'Big Pickle',
+              owned_by: 'opencode',
+              parent: 'oc/big-pickle',
+            },
+            {
+              id: 'oc/deepseek-v4-flash-free',
+              name: 'DeepSeek V4 Flash Free',
+              owned_by: 'opencode',
+              parent: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        hideModelAliases: true,
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  assert.ok(result['oc/big-pickle'], 'expected canonical oc/big-pickle entry');
+  assert.equal(result['opencode/big-pickle'], undefined, 'alias should be hidden');
+  assert.ok(result['oc/deepseek-v4-flash-free'], 'expected non-alias deepseek entry');
+});
+
+test('provider hook uses raw origin prefix when no pretty label exists', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'custom-xyz/my-model', name: 'My Model', parent: null }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        modelNameDisplay: 'prefixed',
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const entry = result['custom-xyz/my-model'];
+  assert.ok(entry, 'expected custom-xyz/my-model entry');
+  assert.equal(entry.name, 'custom-xyz / My Model');
+});
+
+test('modelNameDisplay "prefixed" does not double-prefix an already prefixed name', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'oc/big-pickle', name: 'OpenCode Free / Big Pickle', parent: null }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        modelNameDisplay: 'prefixed',
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const entry = result['oc/big-pickle'];
+  assert.ok(entry, 'expected oc/big-pickle entry');
+  assert.equal(entry.name, 'OpenCode Free / Big Pickle');
+});
