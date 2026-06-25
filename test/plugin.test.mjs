@@ -2296,3 +2296,116 @@ test('provider hook warns and falls back for invalid modelNameDisplay', async ()
   assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
   assert.equal(ghEntry.name, 'GPT-5.5');
 });
+
+test('config hook uses model id as display name when modelNameDisplay is "id"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'chat',
+          modelNameDisplay: 'id',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  const entry = config.provider.omniroute.models['gpt-4o'] ?? config.provider.omniroute.models['gpt-4.1-mini'];
+  assert.ok(entry, 'expected default model entry');
+  assert.equal(entry.name, entry.id);
+});
+
+test('config hook uses model name as display name by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'chat',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  const entry = config.provider.omniroute.models['gpt-4o'] ?? config.provider.omniroute.models['gpt-4.1-mini'];
+  assert.ok(entry, 'expected default model entry');
+  assert.notEqual(entry.name, entry.id);
+  assert.equal(entry.name, 'GPT-4o');
+});
+
+test('auth loader uses model id as display name when modelNameDisplay is "id"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gh/gpt-5.5', name: 'GPT-5.5' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat', modelNameDisplay: 'id' },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  const entry = provider.models['github/gpt-5.5'] ?? provider.models['gh/gpt-5.5'];
+  assert.ok(entry, 'expected github/gpt-5.5 entry');
+  assert.equal(entry.name, entry.id);
+});
+
+test('modelNameDisplay falls back to id when name is empty', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gh/gpt-5.5', name: '' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat', modelNameDisplay: 'invalid' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
+  assert.equal(ghEntry.name, 'gh/gpt-5.5');
+});

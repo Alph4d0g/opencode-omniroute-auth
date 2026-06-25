@@ -207,7 +207,12 @@ async function loadProviderOptions(
   const providerNpm = resolveProviderNpm(provider.npm, config.apiMode);
   replaceProviderModels(
     provider,
-    toProviderModels(effectiveModels, config.baseUrl, providerNpm, config.modelNameDisplay),
+    toProviderModels(
+      effectiveModels,
+      config.baseUrl,
+      providerNpm,
+      config.modelNameDisplay,
+    ),
   );
   if (isRecord(provider.models)) {
     debug(`Provider models hydrated: ${Object.keys(provider.models).length}`);
@@ -890,12 +895,15 @@ function toProviderModel(
   providerNpm: string,
   modelNameDisplay?: 'name' | 'id',
 ): OmniRouteProviderModel {
+  const supportsVision = model.supportsVision === true;
   // Default to true: if API doesn't explicitly say no tools, assume capability exists
   // This aligns with OpenAI-compatible behavior where most models support tools
   const supportsTools = model.supportsTools !== false;
   const supportsTemperature = model.supportsTemperature !== false;
   const supportsReasoning = model.supportsReasoning === true;
-  const supportsAttachment = model.supportsAttachment !== undefined ? model.supportsAttachment : supportsVision;
+  const supportsAttachment = model.supportsAttachment !== undefined
+    ? model.supportsAttachment
+    : supportsVision;
 
   return {
     id: model.id,

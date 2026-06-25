@@ -140,7 +140,7 @@ export interface OmniRouteConfig {
    *   providers serve the same model or when OmniRoute name disambiguation
    *   is not enabled.
    */
-  modelNameDisplay?: "name" | "id";
+  modelNameDisplay?: 'name' | 'id';
 }
 
 export interface OmniRouteProviderModelModalities {
