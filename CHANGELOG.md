@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.3] - Unreleased
+
+### Added
+
+- **`modelNameDisplay` option** — New `OmniRouteConfig` option that controls how model names appear in the model picker. Set to `"id"` to show provider-qualified model IDs (e.g. `gh/gpt-5.5`) instead of human-readable names, which disambiguates entries when multiple providers serve the same base model. (`src/plugin.ts`, `src/types.ts`) (@Rahulsharma0810)
+
+### Fixed
+
+- **Exclude cached tokens from chat usage** — `prompt_tokens` and `total_tokens` in `/chat/completions` responses now exclude `prompt_tokens_details.cached_tokens`, matching OpenCode's separate cached-input accounting. Applies to both JSON and streaming responses. (`src/plugin.ts`) (@makcimbx)
+- **Use `@ai-sdk/openai` for responses mode** — When `apiMode` is `responses`, the plugin now selects `@ai-sdk/openai` as the provider package instead of `@ai-sdk/openai-compatible`, and reconciles explicit model `api.npm` values when the provider package changes. (`src/plugin.ts`) (@makcimbx)
+- **Strip Claude title reasoning effort** — The fetch interceptor now removes `reasoning_effort`/`reasoningEffort` from identified Claude title-generation requests, avoiding Anthropic OAuth temperature/thinking validation errors while preserving reasoning options for normal Claude chat requests. (`src/plugin.ts`) (@thomasmaerz)
+
 ## [1.2.2] - 2026-05-22
 
 ### Added

@@ -127,6 +127,20 @@ export interface OmniRouteConfig {
   modelsDev?: OmniRouteModelsDevConfig;
   /** Optional metadata overrides/additions for custom/virtual models */
   modelMetadata?: OmniRouteModelMetadataConfig;
+  /**
+   * Controls how model names are displayed in the model picker.
+   *
+   * - `"name"` (default): use the `name` field returned by `/v1/models`
+   *   (e.g. `"GPT-5.5"`). When OmniRoute's `MODELS_CATALOG_PREFIX_MODE` is
+   *   set to `dual` (the default), different providers that serve the same
+   *   base model will all share the same display name, making them
+   *   indistinguishable in the picker.
+   * - `"id"`: use the model `id` instead (e.g. `"gh/gpt-5.5"`,
+   *   `"cx/gpt-5.5"`). Always unique per entry — useful when multiple
+   *   providers serve the same model or when OmniRoute name disambiguation
+   *   is not enabled.
+   */
+  modelNameDisplay?: 'name' | 'id';
 }
 
 export interface OmniRouteProviderModelModalities {

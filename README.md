@@ -110,6 +110,7 @@ Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.
 | `provider.omniroute.options.refreshOnList` | boolean | No | Whether to refresh models when provider options load (default: true) |
 | `provider.omniroute.options.modelsDev` | object | No | Enrich model metadata from models.dev on refresh (default: enabled) |
 | `provider.omniroute.options.modelMetadata` | object \| array | No | Override/add metadata for custom/virtual models (works well in `opencode.js`) |
+| `provider.omniroute.options.modelNameDisplay` | `'name' \| 'id'` | No | Use model `name` (default) or `id` in the model picker; `id` disambiguates duplicate display names |
 
 ### Model Metadata Enrichment (models.dev)
 
@@ -273,6 +274,8 @@ interface OmniRouteConfig {
   refreshOnList?: boolean;
   modelsDev?: OmniRouteModelsDevConfig;
   modelMetadata?: OmniRouteModelMetadataConfig;
+  /** Controls how model names appear in the picker: `"name"` (default) or `"id"`. */
+  modelNameDisplay?: 'name' | 'id';
 }
 
 type OmniRouteApiMode = 'chat' | 'responses';
