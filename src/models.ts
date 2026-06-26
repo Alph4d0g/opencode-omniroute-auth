@@ -65,6 +65,11 @@ function normalizeModel(model: OmniRouteModel): OmniRouteModel {
     name: model.name || model.id,
     description: model.description || `OmniRoute model: ${model.id}`,
 
+    // Preserve OpenAI-compatible origin metadata for display/filtering
+    owned_by: model.owned_by,
+    root: model.root,
+    parent: model.parent,
+
     // Context limits: prefer explicit camelCase, fallback to snake_case
     contextWindow:
       model.contextWindow ?? model.context_length ?? model.max_input_tokens,
@@ -337,7 +342,10 @@ export async function fetchModels(
       )
       .map(normalizeModel);
 
-    const dedupedModels = deduplicateModels(rawModels);
+    const visibleModels = config.hideModelAliases
+      ? rawModels.filter((model) => !model.parent)
+      : rawModels;
+    const dedupedModels = deduplicateModels(visibleModels);
     const groupedModels = groupVariantModels(dedupedModels);
     const models = await enrichModelMetadata(groupedModels, config);
 

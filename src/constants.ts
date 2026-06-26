@@ -97,3 +97,23 @@ export const PROVIDER_ALIAS_TO_CANONICAL: Record<string, string> = {
   kr: 'kiro',
   if: 'qoder',
 };
+
+/**
+ * Friendly display labels for provider origins.
+ * Used when modelNameDisplay is "prefixed".
+ */
+export const PROVIDER_DISPLAY_LABELS: Record<string, string> = {
+  oc: 'OpenCode Free',
+  opencode: 'OpenCode',
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic',
+  claude: 'Anthropic',
+  openai: 'OpenAI',
+  google: 'Google',
+  gemini: 'Google',
+  cx: 'Codex',
+  codex: 'Codex',
+  gh: 'GitHub',
+  github: 'GitHub',
+  antigravity: 'Antigravity',
+};

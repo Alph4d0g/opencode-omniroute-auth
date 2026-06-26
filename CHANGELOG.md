@@ -7,12 +7,16 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - **`modelNameDisplay` option** — New `OmniRouteConfig` option that controls how model names appear in the model picker. Set to `"id"` to show provider-qualified model IDs (e.g. `gh/gpt-5.5`) instead of human-readable names, which disambiguates entries when multiple providers serve the same base model. (`src/plugin.ts`, `src/types.ts`) (@Rahulsharma0810)
+- **`modelNameDisplay: "prefixed"` and `hideModelAliases`** — Extended the `modelNameDisplay` option with a `"prefixed"` mode that renders model names as `${provider} / ${name}` (e.g. `"OpenCode / Big Pickle"`) using a provider label map, and added `hideModelAliases` to filter out alias models that have a `parent` field in `/v1/models`. (`src/plugin.ts`, `src/models.ts`, `src/types.ts`, `src/constants.ts`)
 
 ### Fixed
 
+- **Preserve provider/origin prefix in model picker** — OmniRoute models from different providers no longer share the same display name when `modelNameDisplay` is set to `"prefixed"`; aliases can also be hidden with `hideModelAliases`. (#29)
 - **Exclude cached tokens from chat usage** — `prompt_tokens` and `total_tokens` in `/chat/completions` responses now exclude `prompt_tokens_details.cached_tokens`, matching OpenCode's separate cached-input accounting. Applies to both JSON and streaming responses. (`src/plugin.ts`) (@makcimbx)
 - **Use `@ai-sdk/openai` for responses mode** — When `apiMode` is `responses`, the plugin now selects `@ai-sdk/openai` as the provider package instead of `@ai-sdk/openai-compatible`, and reconciles explicit model `api.npm` values when the provider package changes. (`src/plugin.ts`) (@makcimbx)
 - **Strip Claude title reasoning effort** — The fetch interceptor now removes `reasoning_effort`/`reasoningEffort` from identified Claude title-generation requests, avoiding Anthropic OAuth temperature/thinking validation errors while preserving reasoning options for normal Claude chat requests. (`src/plugin.ts`) (@thomasmaerz)
+- **Fix SSE newline boundary corruption** — Corrected `normalizeSseChatUsageResponse` so `\r\n` sequences split across stream chunks no longer inject spurious empty lines into the event stream. (`src/plugin.ts`)
+- **Fix Claude title prompt detection short-circuit** — `isOpenCodeTitlePrompt` now checks `payload.input` even when `payload.messages` is present but does not contain the title prompt. (`src/plugin.ts`)
 
 ## [1.2.2] - 2026-05-22
 

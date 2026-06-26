@@ -18,6 +18,8 @@ import {
   OMNIROUTE_ENDPOINTS,
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_OUTPUT_LIMIT,
+  PROVIDER_ALIAS_TO_CANONICAL,
+  PROVIDER_DISPLAY_LABELS,
 } from './constants.js';
 import { fetchModels, resolveProviderAliasForMetadata } from './models.js';
 import { warn, debug } from './logger.js';
@@ -235,6 +237,7 @@ function createRuntimeConfig(
   const modelsDev = getModelsDevConfig(options);
   const modelMetadata = getModelMetadataConfig(options);
   const modelNameDisplay = getModelNameDisplay(options);
+  const hideModelAliases = getHideModelAliases(options);
 
   return {
     baseUrl,
@@ -245,6 +248,7 @@ function createRuntimeConfig(
     modelsDev,
     modelMetadata,
     modelNameDisplay,
+    hideModelAliases,
   };
 }
 
@@ -381,13 +385,21 @@ function getBoolean(
 
 function getModelNameDisplay(
   options: Record<string, unknown> | undefined,
-): 'name' | 'id' | undefined {
+): 'name' | 'id' | 'prefixed' | undefined {
   const value = options?.modelNameDisplay;
-  if (value === 'name' || value === 'id') {
+  if (value === 'name' || value === 'id' || value === 'prefixed') {
     return value;
   }
   if (value !== undefined) {
     warn(`Unsupported modelNameDisplay option: ${sanitizeForLog(String(value))}. Using name.`);
+  }
+  return undefined;
+}
+
+function getHideModelAliases(options: Record<string, unknown> | undefined): boolean | undefined {
+  const value = options?.hideModelAliases;
+  if (typeof value === 'boolean') {
+    return value;
   }
   return undefined;
 }
@@ -536,7 +548,7 @@ function isGeneratedOmniRouteProviderModel(value: unknown): boolean {
 function reconcileExplicitModels(
   models: Record<string, unknown> | undefined,
   providerNpm: string,
-  modelNameDisplay?: 'name' | 'id',
+  modelNameDisplay?: 'name' | 'id' | 'prefixed',
 ): Record<string, unknown> | undefined {
   if (!isRecord(models)) return models;
   let changed = false;
@@ -558,8 +570,15 @@ function reconcileExplicitModels(
       };
     }
 
-    const expectedName = modelNameDisplay === 'id' ? id : (model.name ?? id);
-    if (typeof model.name === 'string' ? model.name !== expectedName : modelNameDisplay === 'id') {
+    const expectedName = formatModelDisplayName(
+      id,
+      typeof model.name === 'string' ? model.name : id,
+      modelNameDisplay,
+    );
+    const hasName = typeof model.name === 'string';
+    const nameMismatch = hasName && model.name !== expectedName;
+    const needsSyntheticName = !hasName && (modelNameDisplay === 'id' || modelNameDisplay === 'prefixed');
+    if (nameMismatch || needsSyntheticName) {
       updatedModel = {
         ...updatedModel,
         name: expectedName,
@@ -876,11 +895,63 @@ function isValidModelMetadata(value: unknown): { valid: boolean; field?: string 
   return { valid: true };
 }
 
+const PROVIDER_DISPLAY_LABEL_VALUES = new Set(
+  Object.values(PROVIDER_DISPLAY_LABELS).map((label) => label.toLowerCase()),
+);
+
+function formatModelDisplayName(
+  id: string,
+  baseName: string,
+  modelNameDisplay?: 'name' | 'id' | 'prefixed',
+): string {
+  if (modelNameDisplay === 'id') {
+    return id;
+  }
+  if (modelNameDisplay === 'prefixed') {
+    const origin = getModelOrigin(id);
+    if (!origin) {
+      return baseName;
+    }
+    const cleanBaseName = stripProviderPrefix(baseName);
+    return `${getPrettyOrigin(origin)} / ${cleanBaseName}`;
+  }
+  return baseName;
+}
+
+function getModelOrigin(modelId: string): string | undefined {
+  const slashIndex = modelId.indexOf('/');
+  if (slashIndex > 0) {
+    return modelId.slice(0, slashIndex);
+  }
+  return undefined;
+}
+
+function getPrettyOrigin(origin: string): string {
+  return PROVIDER_DISPLAY_LABELS[origin] ?? origin;
+}
+
+function stripProviderPrefix(name: string): string {
+  const slashIndex = name.indexOf(' / ');
+  if (slashIndex <= 0) {
+    return name;
+  }
+  const prefix = name.slice(0, slashIndex);
+  const lowerPrefix = prefix.toLowerCase();
+  if (
+    PROVIDER_DISPLAY_LABELS[lowerPrefix] ||
+    PROVIDER_ALIAS_TO_CANONICAL[lowerPrefix] ||
+    PROVIDER_DISPLAY_LABEL_VALUES.has(lowerPrefix)
+  ) {
+    return name.slice(slashIndex + 3);
+  }
+  return name;
+}
+
 function toProviderModels(
   models: OmniRouteModel[],
   baseUrl: string,
   providerNpm: string,
-  modelNameDisplay?: 'name' | 'id',
+  modelNameDisplay?: 'name' | 'id' | 'prefixed',
 ): Record<string, OmniRouteProviderModel> {
   const entries: Array<[string, OmniRouteProviderModel]> = models.map((model) => [
     model.id,
@@ -893,7 +964,7 @@ function toProviderModel(
   model: OmniRouteModel,
   baseUrl: string,
   providerNpm: string,
-  modelNameDisplay?: 'name' | 'id',
+  modelNameDisplay?: 'name' | 'id' | 'prefixed',
 ): OmniRouteProviderModel {
   const supportsVision = model.supportsVision === true;
   // Default to true: if API doesn't explicitly say no tools, assume capability exists
@@ -907,7 +978,7 @@ function toProviderModel(
 
   return {
     id: model.id,
-    name: modelNameDisplay === 'id' ? model.id : (model.name || model.id),
+    name: formatModelDisplayName(model.id, model.name || model.id, modelNameDisplay),
     providerID: OMNIROUTE_PROVIDER_ID,
     family: getModelFamily(model.id),
     release_date: '',
@@ -1089,17 +1160,22 @@ function normalizeSseChatUsageResponse(response: Response): Response {
   const stream = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       pending += decoder.decode(chunk, { stream: true });
-      pending = pending.replace(/\r\n?/g, '\n');
       const lines = pending.split('\n');
       pending = lines.pop() ?? '';
 
-      for (const line of lines) {
+      for (let line of lines) {
+        if (line.endsWith('\r')) {
+          line = line.slice(0, -1);
+        }
         controller.enqueue(encoder.encode(`${normalizeSseChatUsageLine(line)}\n`));
       }
     },
     flush(controller) {
-      const tail = (pending + decoder.decode()).replace(/\r\n?/g, '\n');
+      let tail = pending + decoder.decode();
       if (tail) {
+        if (tail.endsWith('\r')) {
+          tail = tail.slice(0, -1);
+        }
         controller.enqueue(encoder.encode(`${normalizeSseChatUsageLine(tail)}\n`));
       }
     },
@@ -1268,18 +1344,20 @@ function isOpenCodeTitlePrompt(payload: Record<string, unknown>): boolean {
 
   const messages = payload.messages;
   if (Array.isArray(messages)) {
-    return messages.some((message) => {
+    const hasTitlePrompt = messages.some((message) => {
       if (!isRecord(message) || message.role !== 'system') return false;
       return contentContainsTitlePrompt(message.content);
     });
+    if (hasTitlePrompt) return true;
   }
 
   const input = payload.input;
   if (Array.isArray(input)) {
-    return input.some((item) => {
+    const hasTitlePrompt = input.some((item) => {
       if (!isRecord(item) || item.role !== 'system') return false;
       return contentContainsTitlePrompt(item.content);
     });
+    if (hasTitlePrompt) return true;
   }
 
   return false;
