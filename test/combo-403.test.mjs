@@ -1,12 +1,18 @@
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { clearModelCache, fetchModels } from '../dist/runtime.js';
 
+const ORIGINAL_FETCH = global.fetch;
 const CONFIG = {
   baseUrl: 'http://localhost:20128/v1',
   apiKey: 'test-key',
   apiMode: 'chat',
 };
+
+afterEach(() => {
+  clearModelCache();
+  global.fetch = ORIGINAL_FETCH;
+});
 
 test('403 on /v1/combos does not break /v1/models model listing', async () => {
   global.fetch = async (input) => {

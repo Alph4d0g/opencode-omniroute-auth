@@ -50,6 +50,11 @@ interface ComboCache {
 let comboCache: ComboCache | null = null;
 const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+type ComboFetchOutcome =
+  | { kind: 'success'; combos: Map<string, OmniRouteCombo> }
+  | { kind: 'notFound' }
+  | { kind: 'error' };
+
 /**
  * Fetch combo data from OmniRoute /v1/combos endpoint
  * Falls back to /api/combos on HTTP 404 for older OmniRoute versions.
@@ -72,7 +77,7 @@ export async function fetchComboData(
   async function tryFetch(
     url: string,
     allow404Fallback: boolean,
-  ): Promise<Map<string, OmniRouteCombo> | null> {
+  ): Promise<ComboFetchOutcome> {
     debug(`Fetching combo data from ${url}`);
 
     const controller = new AbortController();
@@ -91,10 +96,10 @@ export async function fetchComboData(
       if (!response.ok) {
         if (allow404Fallback && response.status === 404) {
           debug(`Combo endpoint ${url} returned 404, will try legacy endpoint`);
-          return null;
+          return { kind: 'notFound' };
         }
         warn(`Failed to fetch combo data: ${response.status}`);
-        return null;
+        return { kind: 'error' };
       }
 
       const data = (await response.json()) as Record<string, unknown>;
@@ -108,7 +113,7 @@ export async function fetchComboData(
 
       if (!combosArray) {
         warn('Invalid combo data structure');
-        return null;
+        return { kind: 'error' };
       }
 
       // Build lookup map
@@ -126,21 +131,25 @@ export async function fetchComboData(
       };
 
       debug(`Successfully fetched ${comboMap.size} combos from ${url}`);
-      return comboMap;
+      return { kind: 'success', combos: comboMap };
     } catch (error) {
       warn(`Error fetching combo data: ${error}`);
-      return null;
+      return { kind: 'error' };
     } finally {
       clearTimeout(timeoutId);
     }
   }
 
-  const v1Result = await tryFetch(v1CombosUrl, true);
-  if (v1Result !== null) {
-    return v1Result;
+  const v1Outcome = await tryFetch(v1CombosUrl, true);
+  if (v1Outcome.kind === 'success') {
+    return v1Outcome.combos;
+  }
+  if (v1Outcome.kind === 'error') {
+    return null;
   }
 
-  return tryFetch(legacyCombosUrl, false);
+  const legacyOutcome = await tryFetch(legacyCombosUrl, false);
+  return legacyOutcome.kind === 'success' ? legacyOutcome.combos : null;
 }
 
 /**
