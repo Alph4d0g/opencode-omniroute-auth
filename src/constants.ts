@@ -15,6 +15,8 @@ export const OMNIROUTE_ENDPOINTS = {
   CHAT_COMPLETIONS: '/chat/completions',
   /** Responses endpoint */
   RESPONSES: '/responses',
+  /** Combos endpoint */
+  COMBOS: '/combos',
 };
 
 /**
