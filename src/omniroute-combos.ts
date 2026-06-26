@@ -18,17 +18,17 @@ export function sanitizeForLog(value: string): string {
  * OmniRoute combo definition from /api/combos
  */
 export interface OmniRouteCombo {
-  id: string;
+  id?: string;
   name: string;
-  models: Array<string | { model?: string; id?: string }>;
+  models: Array<string | { model?: string; id?: string; providerId?: string; kind?: string }>;
   strategy: 'priority' | 'weighted' | 'round-robin' | 'random' | 'least-used' | 'cost-optimized';
-  config: {
+  config?: {
     maxRetries?: number;
     retryDelayMs?: number;
     concurrencyPerModel?: number;
   };
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /**
