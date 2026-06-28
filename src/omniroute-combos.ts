@@ -6,7 +6,7 @@ import {
   resolveProviderAlias,
   normalizeModelKey,
 } from './models-dev.js';
-import { REQUEST_TIMEOUT } from './constants.js';
+import { REQUEST_TIMEOUT, OMNIROUTE_ENDPOINTS } from './constants.js';
 import { warn, debug } from './logger.js';
 
 export function sanitizeForLog(value: string): string {
@@ -18,17 +18,17 @@ export function sanitizeForLog(value: string): string {
  * OmniRoute combo definition from /api/combos
  */
 export interface OmniRouteCombo {
-  id: string;
+  id?: string;
   name: string;
-  models: Array<string | { model?: string; id?: string }>;
+  models: Array<string | { model?: string; id?: string; providerId?: string; kind?: string }>;
   strategy: 'priority' | 'weighted' | 'round-robin' | 'random' | 'least-used' | 'cost-optimized';
-  config: {
+  config?: {
     maxRetries?: number;
     retryDelayMs?: number;
     concurrencyPerModel?: number;
   };
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /**
@@ -50,8 +50,14 @@ interface ComboCache {
 let comboCache: ComboCache | null = null;
 const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+type ComboFetchOutcome =
+  | { kind: 'success'; combos: Map<string, OmniRouteCombo> }
+  | { kind: 'notFound' }
+  | { kind: 'error' };
+
 /**
- * Fetch combo data from OmniRoute /api/combos endpoint
+ * Fetch combo data from OmniRoute /v1/combos endpoint
+ * Falls back to /api/combos on HTTP 404 for older OmniRoute versions.
  */
 export async function fetchComboData(
   config: OmniRouteConfig,
@@ -65,57 +71,85 @@ export async function fetchComboData(
     return comboCache.combos;
   }
 
-  const combosUrl = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
-  debug(`Fetching combo data from ${combosUrl}`);
+  const v1CombosUrl = `${baseUrl.replace(/\/$/, '')}${OMNIROUTE_ENDPOINTS.COMBOS}`;
+  const legacyCombosUrl = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+  async function tryFetch(
+    url: string,
+    allow404Fallback: boolean,
+  ): Promise<ComboFetchOutcome> {
+    debug(`Fetching combo data from ${url}`);
 
-  try {
-    const response = await fetch(combosUrl, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'application/json',
-      },
-      signal: controller.signal,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
-    if (!response.ok) {
-      warn(`Failed to fetch combo data: ${response.status}`);
-      return null;
-    }
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json',
+        },
+        signal: controller.signal,
+      });
 
-    const data = await response.json() as OmniRouteCombosResponse;
-
-    // Validate structure
-    if (!data?.combos || !Array.isArray(data.combos)) {
-      warn('Invalid combo data structure');
-      return null;
-    }
-
-    // Build lookup map
-    const comboMap = new Map<string, OmniRouteCombo>();
-    for (const combo of data.combos) {
-      if (combo?.name) {
-        comboMap.set(combo.name, combo);
+      if (!response.ok) {
+        if (allow404Fallback && response.status === 404) {
+          debug(`Combo endpoint ${url} returned 404, will try legacy endpoint`);
+          return { kind: 'notFound' };
+        }
+        warn(`Failed to fetch combo data: ${response.status}`);
+        return { kind: 'error' };
       }
+
+      const data = (await response.json()) as Record<string, unknown>;
+
+      // Normalize both response shapes: legacy `.combos` takes precedence over proxy `.data`
+      const combosArray = Array.isArray(data?.combos)
+        ? (data.combos as OmniRouteCombo[])
+        : Array.isArray(data?.data)
+          ? (data.data as OmniRouteCombo[])
+          : null;
+
+      if (!combosArray) {
+        warn('Invalid combo data structure');
+        return { kind: 'error' };
+      }
+
+      // Build lookup map
+      const comboMap = new Map<string, OmniRouteCombo>();
+      for (const combo of combosArray) {
+        if (combo?.name) {
+          comboMap.set(combo.name, combo);
+        }
+      }
+
+      // Update cache
+      comboCache = {
+        combos: comboMap,
+        timestamp: Date.now(),
+      };
+
+      debug(`Successfully fetched ${comboMap.size} combos from ${url}`);
+      return { kind: 'success', combos: comboMap };
+    } catch (error) {
+      warn(`Error fetching combo data: ${error}`);
+      return { kind: 'error' };
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    // Update cache
-    comboCache = {
-      combos: comboMap,
-      timestamp: Date.now(),
-    };
-
-    debug(`Successfully fetched ${comboMap.size} combos`);
-    return comboMap;
-  } catch (error) {
-    warn(`Error fetching combo data: ${error}`);
-    return null;
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  const v1Outcome = await tryFetch(v1CombosUrl, true);
+  if (v1Outcome.kind === 'success') {
+    return v1Outcome.combos;
+  }
+  if (v1Outcome.kind === 'error') {
+    return null;
+  }
+
+  const legacyOutcome = await tryFetch(legacyCombosUrl, false);
+  return legacyOutcome.kind === 'success' ? legacyOutcome.combos : null;
 }
 
 /**
