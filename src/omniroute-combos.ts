@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { OmniRouteConfig, OmniRouteModel, OmniRouteModelMetadata } from './types.js';
 import type { ModelsDevIndex, ModelsDevModel } from './models-dev.js';
 import {
@@ -46,9 +48,23 @@ interface ComboCache {
   timestamp: number;
 }
 
-// In-memory cache for combo data
-let comboCache: ComboCache | null = null;
+// Cache entries are isolated by endpoint and a non-reversible credential digest.
+const comboCaches = new Map<string, ComboCache>();
 const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function pruneExpiredComboCaches(now = Date.now()): void {
+  for (const [key, cached] of comboCaches) {
+    if (now - cached.timestamp >= COMBO_CACHE_TTL) {
+      comboCaches.delete(key);
+    }
+  }
+}
+
+function getComboCacheKey(baseUrl: string, apiKey: string): string {
+  const endpoint = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
+  const credentialDigest = createHash('sha256').update(apiKey).digest('hex');
+  return `${endpoint}\0${credentialDigest}`;
+}
 
 /**
  * Fetch combo data from OmniRoute /api/combos endpoint
@@ -59,10 +75,18 @@ export async function fetchComboData(
   const baseUrl = config.baseUrl;
   const apiKey = config.apiKey;
 
-  // Check cache first
-  if (comboCache && Date.now() - comboCache.timestamp < COMBO_CACHE_TTL) {
+  if (!baseUrl || !apiKey) {
+    warn('Cannot fetch combo data without baseUrl and apiKey');
+    return null;
+  }
+
+  const cacheKey = getComboCacheKey(baseUrl, apiKey);
+
+  // Check the cache for this endpoint and credential identity.
+  const cached = comboCaches.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < COMBO_CACHE_TTL) {
     debug('Using cached combo data');
-    return comboCache.combos;
+    return cached.combos;
   }
 
   const combosUrl = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
@@ -102,11 +126,12 @@ export async function fetchComboData(
       }
     }
 
-    // Update cache
-    comboCache = {
+    // Update only this endpoint/credential cache entry.
+    pruneExpiredComboCaches();
+    comboCaches.set(cacheKey, {
       combos: comboMap,
       timestamp: Date.now(),
-    };
+    });
 
     debug(`Successfully fetched ${comboMap.size} combos`);
     return comboMap;
@@ -119,11 +144,18 @@ export async function fetchComboData(
 }
 
 /**
- * Clear the combo cache
+ * Clear combo cache entries.
+ * When config is provided, only that endpoint/credential identity is cleared.
+ * Without config, the entire map is cleared (legacy behavior).
  */
-export function clearComboCache(): void {
-  comboCache = null;
-  debug('Combo cache cleared');
+export function clearComboCache(config?: Pick<OmniRouteConfig, 'baseUrl' | 'apiKey'>): void {
+  if (!config?.baseUrl || !config.apiKey) {
+    comboCaches.clear();
+    debug('All combo caches cleared');
+    return;
+  }
+  comboCaches.delete(getComboCacheKey(config.baseUrl, config.apiKey));
+  debug('Combo cache cleared for provided configuration');
 }
 
 /**
@@ -327,11 +359,10 @@ export function isComboModel(model: OmniRouteModel): boolean {
     return true;
   }
 
-  // Fallback: check if it's in our combo cache
-  if (comboCache?.combos?.has(model.id)) {
-    return true;
+  // Fallback: check all endpoint/credential-specific combo caches.
+  for (const cached of comboCaches.values()) {
+    if (cached.combos.has(model.id)) return true;
   }
-
   return false;
 }
 
