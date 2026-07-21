@@ -10,8 +10,9 @@ import { REQUEST_TIMEOUT } from './constants.js';
 import { warn, debug } from './logger.js';
 
 export function sanitizeForLog(value: string): string {
-  // Remove all control characters except tab (0x09)
-  return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  // Remove all ASCII control characters except tab (0x09),
+  // plus Unicode line/paragraph separators (U+2028 / U+2029).
+  return value.replace(/[\x00-\x08\x0A-\x1F\x7F\u2028\u2029]/g, '');
 }
 
 /**
