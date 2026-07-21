@@ -382,8 +382,8 @@ export function clearModelCache(config?: OmniRouteConfig, apiKey?: string): void
     modelCache.clear();
     debug('All model caches cleared');
   }
-  // Also clear combo cache
-  clearComboCache();
+  // Also clear matching combo cache entry (or all when no config provided)
+  clearComboCache(config && apiKey ? { baseUrl: config.baseUrl, apiKey } : undefined);
 }
 
 /**

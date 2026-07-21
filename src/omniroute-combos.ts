@@ -52,6 +52,14 @@ interface ComboCache {
 const comboCaches = new Map<string, ComboCache>();
 const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+function pruneExpiredComboCaches(now = Date.now()): void {
+  for (const [key, cached] of comboCaches) {
+    if (now - cached.timestamp >= COMBO_CACHE_TTL) {
+      comboCaches.delete(key);
+    }
+  }
+}
+
 function getComboCacheKey(baseUrl: string, apiKey: string): string {
   const endpoint = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
   const credentialDigest = createHash('sha256').update(apiKey).digest('hex');
@@ -119,6 +127,7 @@ export async function fetchComboData(
     }
 
     // Update only this endpoint/credential cache entry.
+    pruneExpiredComboCaches();
     comboCaches.set(cacheKey, {
       combos: comboMap,
       timestamp: Date.now(),
@@ -135,11 +144,18 @@ export async function fetchComboData(
 }
 
 /**
- * Clear the combo cache
+ * Clear combo cache entries.
+ * When config is provided, only that endpoint/credential identity is cleared.
+ * Without config, the entire map is cleared (legacy behavior).
  */
-export function clearComboCache(): void {
-  comboCaches.clear();
-  debug('Combo cache cleared');
+export function clearComboCache(config?: Pick<OmniRouteConfig, 'baseUrl' | 'apiKey'>): void {
+  if (!config?.baseUrl || !config.apiKey) {
+    comboCaches.clear();
+    debug('All combo caches cleared');
+    return;
+  }
+  comboCaches.delete(getComboCacheKey(config.baseUrl, config.apiKey));
+  debug('Combo cache cleared for provided configuration');
 }
 
 /**
