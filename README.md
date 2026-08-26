@@ -13,6 +13,7 @@
 - ✅ **Model Metadata Normalization** - Reads all OmniRoute field variants (camelCase, snake_case, capabilities object) with proper precedence
 - ✅ **Provider Alias Deduplication** - Automatically deduplicates alias/canonical model entries (e.g., `cx/gpt-5.5` → `codex/gpt-5.5`)
 - ✅ **Combo Model Capability Enrichment** - Automatically calculates lowest common capabilities for OmniRoute combo models
+- ✅ **Auto-Router Capability Enrichment** - Automatically computes context window/capabilities for OmniRoute's `auto` zero-config router from the rest of your catalog, no hardcoding needed
 - ✅ **models.dev Enrichment** - Enriches model metadata from models.dev API with provider alias resolution
 - ✅ **Subscription Provider Fallback** - Falls back to public providers for subscription-based models
 - ✅ **Model Variant Support** - Automatically strips reasoning effort suffixes (e.g., `gpt-5.5-xhigh` → `gpt-5.5`) for lookup
@@ -205,6 +206,23 @@ Calculated capabilities:
 - Tools: **true** (all support tools)
 
 Note: Some underlying models may not be found in `models.dev` (e.g., custom models). In such cases, they are excluded from capability calculation, and a warning is logged.
+
+### Auto-Router Model Capability Enrichment
+
+OmniRoute's zero-config `auto` router (added to `models` as `auto`) is not listed in `/api/combos`
+like user-defined combos, so it can't be resolved to underlying models the same way. Instead, if a
+model with id `auto` (or `<provider>/auto`) appears in your fetched model list without a
+`contextWindow`/`maxTokens` already set, this plugin automatically computes its capabilities as the
+lowest common denominator across every other known model in your catalog:
+
+- **Context Window / Max Tokens**: minimum across all other fetched models
+- **Vision / Tools / Streaming / Temperature / Attachment**: `true` only if ALL other models support it
+- **Reasoning**: `true` if ANY other model supports it
+
+This means you never need to hardcode or manually update `auto`'s context window as OmniRoute's
+provider/model catalog grows or shrinks — it's recalculated automatically on every model fetch. If
+OmniRoute itself ever starts returning explicit capabilities for `auto` (or you set them via
+`modelMetadata` overrides), those take precedence and this calculation is skipped.
 
 ### API Mode
 
