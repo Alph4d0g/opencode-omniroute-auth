@@ -15,7 +15,7 @@ import {
   resolveModelAlias,
 } from './models-dev.js';
 import type { ModelsDevIndex, ModelsDevModel } from './models-dev.js';
-import { enrichComboModels, clearComboCache, splitModelId } from './omniroute-combos.js';
+import { enrichComboModels, enrichAutoModel, clearComboCache, splitModelId } from './omniroute-combos.js';
 import { warn, debug } from './logger.js';
 
 /**
@@ -443,7 +443,10 @@ async function enrichModelMetadata(
   // Enrich combo models with lowest common capabilities
   const withComboCapabilities = await enrichComboModels(withModelsDev, config, modelsDevIndex);
 
-  return withComboCapabilities;
+  // Enrich the "auto" zero-config router model (if present) with capabilities
+  // computed from every other known model, so it never needs manual overrides
+  // as OmniRoute's catalog grows.
+  return enrichAutoModel(withComboCapabilities);
 }
 
 /**

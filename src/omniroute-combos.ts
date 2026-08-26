@@ -336,6 +336,73 @@ export function isComboModel(model: OmniRouteModel): boolean {
 }
 
 /**
+ * Identify the OmniRoute "auto" zero-config router model.
+ * OmniRoute exposes this as a model id of literally `auto` (optionally
+ * prefixed, e.g. `omniroute/auto`). Unlike user-defined combos, it is not
+ * listed in `/api/combos`, so it needs its own capability calculation.
+ */
+export function isAutoModel(model: OmniRouteModel): boolean {
+  const { modelKey } = splitModelId(model.id);
+  return modelKey.toLowerCase() === 'auto';
+}
+
+/**
+ * Enrich the "auto" model (if present in the fetched model list) with
+ * capabilities computed as the lowest common denominator across every
+ * other known model. This mirrors how user-defined combo capabilities are
+ * calculated, and ensures the "auto" router's advertised context window /
+ * capabilities automatically track the OmniRoute catalog as it grows or
+ * shrinks, without requiring any hardcoded overrides.
+ *
+ * This should be called after models.dev + combo enrichment, so that the
+ * "other models" pool already has resolved capabilities where possible.
+ */
+export function enrichAutoModel(models: OmniRouteModel[]): OmniRouteModel[] {
+  const autoIndex = models.findIndex(isAutoModel);
+  if (autoIndex === -1) return models;
+
+  const autoModel = models[autoIndex];
+
+  // If OmniRoute or models.dev already provided full capability data, don't override it.
+  if (autoModel.contextWindow !== undefined && autoModel.maxTokens !== undefined) {
+    return models;
+  }
+
+  const others = models.filter((model, index) => index !== autoIndex && !isAutoModel(model));
+  if (others.length === 0) {
+    return models;
+  }
+
+  const withContext = others.filter((m): m is OmniRouteModel & { contextWindow: number } => m.contextWindow !== undefined);
+  const withMaxTokens = others.filter((m): m is OmniRouteModel & { maxTokens: number } => m.maxTokens !== undefined);
+
+  const computedContextWindow =
+    autoModel.contextWindow ?? (withContext.length > 0 ? Math.min(...withContext.map((m) => m.contextWindow)) : undefined);
+  const computedMaxTokens =
+    autoModel.maxTokens ?? (withMaxTokens.length > 0 ? Math.min(...withMaxTokens.map((m) => m.maxTokens)) : undefined);
+
+  debug(
+    `Calculated capabilities for auto-router model "${sanitizeForLog(autoModel.id)}" from ${others.length} known models: context=${computedContextWindow ?? 'N/A'}, maxTokens=${computedMaxTokens ?? 'N/A'}`,
+  );
+
+  const updated: OmniRouteModel = {
+    ...autoModel,
+    ...(computedContextWindow !== undefined ? { contextWindow: computedContextWindow } : {}),
+    ...(computedMaxTokens !== undefined ? { maxTokens: computedMaxTokens } : {}),
+    supportsVision: autoModel.supportsVision ?? others.every((m) => m.supportsVision === true),
+    supportsTools: autoModel.supportsTools ?? others.every((m) => m.supportsTools === true),
+    supportsStreaming: autoModel.supportsStreaming ?? others.every((m) => m.supportsStreaming === true),
+    supportsTemperature: autoModel.supportsTemperature ?? others.every((m) => m.supportsTemperature === true),
+    supportsReasoning: autoModel.supportsReasoning ?? others.some((m) => m.supportsReasoning === true),
+    supportsAttachment: autoModel.supportsAttachment ?? others.every((m) => m.supportsAttachment === true),
+  };
+
+  const result = [...models];
+  result[autoIndex] = updated;
+  return result;
+}
+
+/**
  * Enrich models with combo-specific capabilities
  * This should be called after models.dev enrichment
  */

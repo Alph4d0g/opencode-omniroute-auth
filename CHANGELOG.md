@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Auto-Router Capability Enrichment** — OmniRoute's zero-config `auto` model is no longer left without capability metadata. If a model with id `auto` (or `<provider>/auto`) is present in the fetched model list without an explicit `contextWindow`/`maxTokens`, the plugin now computes its capabilities as the lowest common denominator across all other known models (min context window/max tokens, boolean-AND for vision/tools/streaming/temperature/attachment, boolean-OR for reasoning). This removes the need to hardcode or manually maintain a context window override for `auto` as the OmniRoute catalog grows. (`src/omniroute-combos.ts`: `enrichAutoModel`, `isAutoModel`; wired into `src/models.ts`) (resolves #43)
+- **5 New Test Cases** (`test/auto-model.test.mjs`) covering `isAutoModel` id matching and `enrichAutoModel` computation, no-op, and override-preservation behavior.
+
 ## [1.2.2] - 2026-05-22
 
 ### Added
