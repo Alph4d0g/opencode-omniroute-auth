@@ -608,8 +608,8 @@ export function resolveProviderAlias(
     glm: 'zai-coding-plan',
     'kimi-coding': 'moonshotai',
     kmc: 'moonshotai',
-    gh: 'google',
-    github: 'google',
+    gh: 'github-copilot',
+    github: 'github-copilot',
     ...config?.modelsDev?.providerAliases,
   };
 
