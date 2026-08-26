@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **GitHub Copilot models.dev provider alias** — `resolveProviderAlias()` in `src/models-dev.ts` incorrectly mapped both `gh` and `github` provider prefixes to `google` when looking up models.dev capability/context-window fallback data. GitHub Copilot proxies many upstream providers (Anthropic, OpenAI, xAI, etc.), not just Google, so this misdirected any models.dev fallback lookup for `gh/*`/`github/*` models into the wrong provider's data. Now correctly maps to `github-copilot`, models.dev's actual provider key. 5 new tests in `test/provider-alias.test.mjs`. (resolves #45)
+
 ## [1.2.2] - 2026-05-22
 
 ### Added
