@@ -22,6 +22,7 @@ import {
 import { fetchModels, resolveProviderAliasForMetadata } from './models.js';
 import { warn, debug } from './logger.js';
 import { sanitizeForLog } from './omniroute-combos.js';
+import { applyGatewayInferenceTelemetry } from './telemetry.js';
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 const OMNIROUTE_PROVIDER_NPM = '@ai-sdk/openai-compatible';
@@ -913,7 +914,7 @@ function createFetchInterceptor(
       debug('Processing /v1/models response');
     }
 
-    return response;
+    return applyGatewayInferenceTelemetry(response);
   };
 }
 
