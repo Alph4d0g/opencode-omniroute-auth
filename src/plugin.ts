@@ -1,4 +1,5 @@
 import type { Plugin, Hooks } from '@opencode-ai/plugin';
+import { createHash } from 'crypto';
 import { homedir } from 'os';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
@@ -11,11 +12,15 @@ import type {
   OmniRouteModelsDevConfig,
   OmniRouteProviderModel,
   OmniRouteModelVariant,
+  OmniRouteSessionScope,
 } from './types.js';
 import {
   OMNIROUTE_PROVIDER_ID,
   OMNIROUTE_DEFAULT_MODELS,
   OMNIROUTE_ENDPOINTS,
+  OMNIROUTE_NO_MEMORY_HEADER,
+  OMNIROUTE_SESSION_ID_HEADER,
+  OMNIROUTE_SESSION_ID_PREFIX,
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_OUTPUT_LIMIT,
 } from './constants.js';
@@ -217,7 +222,36 @@ function createRuntimeConfig(
     refreshOnList,
     modelsDev,
     modelMetadata,
+    sessionScope: getSessionScope(options),
+    disableMemory: getBoolean(options, 'disableMemory'),
   };
+}
+
+function getSessionScope(options?: Record<string, unknown>): OmniRouteSessionScope {
+  const value = options?.sessionScope;
+  if (value === undefined) {
+    return 'project';
+  }
+
+  if (value === 'project' || value === 'off') {
+    return value;
+  }
+
+  warn(`Unsupported sessionScope option: ${sanitizeForLog(String(value))}. Using project.`);
+  return 'project';
+}
+
+/**
+ * Derive a stable, non-reversible session id for the current project.
+ *
+ * OmniRoute scopes per-project state (notably Memory) by `x-omniroute-session-id`; without
+ * one it falls back to a fresh per-request id, which lets state from unrelated projects
+ * sharing an API key mix together. The cwd is hashed rather than sent verbatim so local
+ * filesystem paths never leave the machine.
+ */
+function resolveProjectSessionId(cwd: string): string {
+  const digest = createHash('sha256').update(cwd).digest('hex').slice(0, 16);
+  return `${OMNIROUTE_SESSION_ID_PREFIX}${digest}`;
 }
 
 async function readAuthFromStore(
@@ -867,6 +901,10 @@ function createFetchInterceptor(
   config: OmniRouteConfig,
 ): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
   const baseUrl = config.baseUrl || 'http://localhost:20128/v1';
+  // Resolved once per loader call: the working directory does not change mid-session,
+  // and hashing on every request would be wasted work on the hot path.
+  const sessionId =
+    config.sessionScope === 'off' ? undefined : resolveProjectSessionId(process.cwd());
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     // Properly extract URL from RequestInfo (handles Request objects correctly)
@@ -895,6 +933,16 @@ function createFetchInterceptor(
 
     headers.set('Authorization', `Bearer ${config.apiKey}`);
     headers.set('Content-Type', 'application/json');
+
+    // Only set when the caller has not already supplied one, so an explicit
+    // per-request header always wins over the plugin's project-derived default.
+    if (sessionId !== undefined && !headers.has(OMNIROUTE_SESSION_ID_HEADER)) {
+      headers.set(OMNIROUTE_SESSION_ID_HEADER, sessionId);
+    }
+
+    if (config.disableMemory === true) {
+      headers.set(OMNIROUTE_NO_MEMORY_HEADER, 'true');
+    }
 
     const sanitizedBody = await sanitizeGeminiToolSchemas(input, init, url);
 

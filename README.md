@@ -110,6 +110,54 @@ Use `/connect omniroute` to store your API key in `~/.local/share/opencode/auth.
 | `provider.omniroute.options.refreshOnList` | boolean | No | Whether to refresh models when provider options load (default: true) |
 | `provider.omniroute.options.modelsDev` | object | No | Enrich model metadata from models.dev on refresh (default: enabled) |
 | `provider.omniroute.options.modelMetadata` | object \| array | No | Override/add metadata for custom/virtual models (works well in `opencode.js`) |
+| `provider.omniroute.options.sessionScope` | `'project' \| 'off'` | No | How to derive the `x-omniroute-session-id` header (default: `project`) |
+| `provider.omniroute.options.disableMemory` | boolean | No | Send `x-omniroute-no-memory: true` on every request (default: false) |
+
+### Project-Scoped Session Id
+
+OmniRoute scopes per-project server-side state — most notably its [Memory](https://github.com/diegosouzapw/OmniRoute/blob/main/docs/frameworks/MEMORY.md) feature — by the `x-omniroute-session-id` request header. When no header is sent, OmniRoute falls back to a fresh per-request id, so state extracted while working on one project can surface in an unrelated project that shares the same API key.
+
+By default this plugin sends a stable id derived from the current working directory:
+
+```
+x-omniroute-session-id: opencode-<sha256(cwd) first 16 hex chars>
+```
+
+The directory is hashed, never sent verbatim, so local filesystem paths do not leave your machine. The id is stable for a given project directory and differs across projects.
+
+To turn it off and let OmniRoute use its own per-request id:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "sessionScope": "off"
+      }
+    }
+  }
+}
+```
+
+An explicit `x-omniroute-session-id` header set by the caller always takes precedence over the plugin's default.
+
+### Opting Out of OmniRoute Memory
+
+OmniRoute's Memory setting is server-side and shared by every client hitting that instance. To opt this client out without changing the server configuration, set `disableMemory`:
+
+```json
+{
+  "provider": {
+    "omniroute": {
+      "options": {
+        "disableMemory": true
+      }
+    }
+  }
+}
+```
+
+This sends `x-omniroute-no-memory: true` on every intercepted request, which disables both memory and skill injection for that request server-side.
 
 ### Model Metadata Enrichment (models.dev)
 
@@ -262,6 +310,7 @@ import type {
   OmniRouteModel,
   OmniRouteModelMetadataConfig,
   OmniRouteModelsDevConfig,
+  OmniRouteSessionScope,
 } from "opencode-omniroute-auth";
 
 interface OmniRouteConfig {
@@ -273,9 +322,12 @@ interface OmniRouteConfig {
   refreshOnList?: boolean;
   modelsDev?: OmniRouteModelsDevConfig;
   modelMetadata?: OmniRouteModelMetadataConfig;
+  sessionScope?: OmniRouteSessionScope;
+  disableMemory?: boolean;
 }
 
 type OmniRouteApiMode = 'chat' | 'responses';
+type OmniRouteSessionScope = 'project' | 'off';
 
 interface OmniRouteModel {
   id: string;

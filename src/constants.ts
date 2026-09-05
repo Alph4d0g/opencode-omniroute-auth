@@ -87,6 +87,17 @@ export const MODELS_DEV_CACHE_TTL = 24 * 60 * 60 * 1000;
 export const MODELS_DEV_TIMEOUT_MS = 5000;
 
 /**
+ * Request headers OmniRoute uses to scope per-project state and opt out of Memory
+ */
+export const OMNIROUTE_SESSION_ID_HEADER = 'x-omniroute-session-id';
+export const OMNIROUTE_NO_MEMORY_HEADER = 'x-omniroute-no-memory';
+
+/**
+ * Prefix for plugin-generated session ids, so they are recognizable in OmniRoute logs
+ */
+export const OMNIROUTE_SESSION_ID_PREFIX = 'opencode-';
+
+/**
  * Provider alias-to-canonical mapping for deduplication
  */
 export const PROVIDER_ALIAS_TO_CANONICAL: Record<string, string> = {
