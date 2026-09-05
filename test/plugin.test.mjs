@@ -44,6 +44,25 @@ function createModelsResponse() {
   };
 }
 
+function createRecordingFetch(calls) {
+  return async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    calls.push({ url, init });
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+}
+
 async function createTempAuthHome(auth = { omniroute: { type: 'api', key: 'test-key' } }) {
   const tempHome = join(tmpdir(), `opencode-test-${Date.now()}-${Math.random()}`);
   const dataHome = join(tempHome, '.local', 'share');
@@ -128,6 +147,148 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
 
   const externalHeaders = new Headers(externalCall.init?.headers);
   assert.equal(externalHeaders.get('Authorization'), null);
+  assert.equal(externalHeaders.get('x-omniroute-session-id'), null);
+});
+
+test('loader sends a project-scoped session id and omits the no-memory header by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = createRecordingFetch(calls);
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(),
+      apiMode: 'chat',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+
+  const call = calls.find((entry) => entry.url.includes('/chat/completions'));
+  assert.ok(call);
+
+  const headers = new Headers(call.init?.headers);
+  const sessionId = headers.get('x-omniroute-session-id');
+
+  assert.ok(sessionId, 'session id header should be present');
+  assert.match(sessionId, /^opencode-[0-9a-f]{16}$/);
+  assert.ok(
+    !sessionId.includes(process.cwd()),
+    'session id must not leak the raw working directory',
+  );
+  assert.equal(headers.get('x-omniroute-no-memory'), null);
+});
+
+test('loader derives the same session id for repeated calls in one project', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = createRecordingFetch(calls);
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(),
+      apiMode: 'chat',
+    },
+    models: {},
+  };
+
+  const first = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  await first.fetch(`${getDummyBaseUrl()}/chat/completions`, { method: 'POST', body: '{}' });
+
+  const second = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  await second.fetch(`${getDummyBaseUrl()}/chat/completions`, { method: 'POST', body: '{}' });
+
+  const [firstCall, secondCall] = calls.filter((entry) => entry.url.includes('/chat/completions'));
+  assert.ok(firstCall && secondCall);
+
+  const firstSessionId = new Headers(firstCall.init?.headers).get('x-omniroute-session-id');
+  const secondSessionId = new Headers(secondCall.init?.headers).get('x-omniroute-session-id');
+
+  assert.ok(firstSessionId);
+  assert.equal(firstSessionId, secondSessionId);
+});
+
+test('loader omits the session id header when sessionScope is off', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = createRecordingFetch(calls);
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(),
+      apiMode: 'chat',
+      sessionScope: 'off',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  await options.fetch(`${getDummyBaseUrl()}/chat/completions`, { method: 'POST', body: '{}' });
+
+  const call = calls.find((entry) => entry.url.includes('/chat/completions'));
+  assert.ok(call);
+  assert.equal(new Headers(call.init?.headers).get('x-omniroute-session-id'), null);
+});
+
+test('loader preserves a caller-supplied session id', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = createRecordingFetch(calls);
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(),
+      apiMode: 'chat',
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: '{}',
+    headers: { 'x-omniroute-session-id': 'caller-supplied' },
+  });
+
+  const call = calls.find((entry) => entry.url.includes('/chat/completions'));
+  assert.ok(call);
+  assert.equal(
+    new Headers(call.init?.headers).get('x-omniroute-session-id'),
+    'caller-supplied',
+  );
+});
+
+test('loader sends the no-memory header when disableMemory is enabled', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = createRecordingFetch(calls);
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(),
+      apiMode: 'chat',
+      disableMemory: true,
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  await options.fetch(`${getDummyBaseUrl()}/chat/completions`, { method: 'POST', body: '{}' });
+
+  const call = calls.find((entry) => entry.url.includes('/chat/completions'));
+  assert.ok(call);
+  assert.equal(new Headers(call.init?.headers).get('x-omniroute-no-memory'), 'true');
 });
 
 test('auth loader applies user modelMetadata override to provider models', async () => {

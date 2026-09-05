@@ -108,6 +108,15 @@ export interface OmniRouteModelsResponse {
 export type OmniRouteApiMode = 'chat' | 'responses';
 
 /**
+ * How the plugin derives the `x-omniroute-session-id` header.
+ *
+ * - `project` (default): a stable id derived from the current working directory, so
+ *   OmniRoute scopes per-project state (e.g. Memory) separately for each workspace.
+ * - `off`: never send the header; OmniRoute falls back to its own per-request id.
+ */
+export type OmniRouteSessionScope = 'project' | 'off';
+
+/**
  * OmniRoute configuration
  */
 export interface OmniRouteConfig {
@@ -127,6 +136,10 @@ export interface OmniRouteConfig {
   modelsDev?: OmniRouteModelsDevConfig;
   /** Optional metadata overrides/additions for custom/virtual models */
   modelMetadata?: OmniRouteModelMetadataConfig;
+  /** How to derive the `x-omniroute-session-id` header (default: `project`) */
+  sessionScope?: OmniRouteSessionScope;
+  /** Send `x-omniroute-no-memory: true` to opt every request out of OmniRoute Memory (default: false) */
+  disableMemory?: boolean;
 }
 
 export interface OmniRouteProviderModelModalities {

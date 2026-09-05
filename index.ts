@@ -9,4 +9,5 @@ export type {
   OmniRouteModelMetadataBlock,
   OmniRouteModelMetadataConfig,
   OmniRouteModelsDevConfig,
+  OmniRouteSessionScope,
 } from './src/types.js';
