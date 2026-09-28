@@ -15,7 +15,9 @@ writeFileSync(PLUGIN_LOG_FILE, '');
 // Ensure this file wins mtime races against any previously-created test logs.
 utimesSync(PLUGIN_LOG_FILE, Date.now() / 1000, (Date.now() / 1000) + 1000);
 
-import OmniRouteAuthPlugin from '../dist/index.js';
+import pluginEntry from '../dist/index.js';
+// V1 hosts (>=1.18.29) support object entrypoints and call entry.server().
+const OmniRouteAuthPlugin = pluginEntry.server ?? pluginEntry;
 import { clearModelCache } from '../dist/runtime.js';
 import { clearModelsDevCache } from '../dist/src/models-dev.js';
 

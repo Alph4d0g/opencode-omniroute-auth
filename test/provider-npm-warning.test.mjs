@@ -18,7 +18,9 @@ test('config hook warns when provider npm conflicts with apiMode', async () => {
   // Ensure this file is selected by the logger's mtime-based picker.
   utimesSync(logFile, Date.now() / 1000, (Date.now() / 1000) + 1000);
 
-  const { default: OmniRouteAuthPlugin } = await import('../dist/index.js');
+  const pluginEntry = (await import('../dist/index.js')).default;
+  // V1 hosts (>=1.18.29) support object entrypoints and call entry.server().
+  const OmniRouteAuthPlugin = pluginEntry.server ?? pluginEntry;
   const plugin = await OmniRouteAuthPlugin({});
   const config = {
     provider: {

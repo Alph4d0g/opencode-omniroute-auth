@@ -54,6 +54,58 @@ The plugin automatically:
 
 No manual configuration file editing required!
 
+## OpenCode V2
+
+Version 2.0.0 of this plugin works on **both OpenCode V2 and OpenCode V1** (V1 1.18.29 or newer). The package default-exports a definition object: V2 loads it through `setup(ctx)`, V1 through `server(ctx)`.
+
+### V2 configuration
+
+In OpenCode 2 the `plugin` array is replaced by `plugins`, and package entries become objects. Options move from `provider.omniroute.options` to the plugin entry — the plugin owns the provider registration (driver package, settings, models):
+
+```jsonc
+// V1
+{
+  "plugin": ["opencode-omniroute-auth"],
+  "provider": {
+    "omniroute": { "options": { "baseURL": "http://localhost:20128/v1" } }
+  }
+}
+
+// V2
+{
+  "plugins": [
+    {
+      "package": "opencode-omniroute-auth",
+      "options": {
+        "baseURL": "http://localhost:20128/v1",
+        "apiMode": "chat",
+        "refreshOnList": true,
+        "modelCacheTtl": 300000
+      }
+    }
+  ]
+}
+```
+
+Keep or drop the existing `provider.omniroute` entry — either way the plugin fills in the driver package, `baseURL`/`apiKey` settings, and the model list. All options documented below work unchanged when placed under the plugin entry's `options`.
+
+### V2 authentication
+
+Key resolution order:
+
+1. Active `omniroute` **integration credential** (set via `/connect omniroute`; V2 also auto-imports the legacy `~/.local/share/opencode/auth.json`)
+2. Legacy `auth.json` store
+3. `OMNIROUTE_API_KEY` environment variable
+
+Run `/connect omniroute` to store your key in the V2 credential store.
+
+### Verifying the port
+
+1. Confirm `opencode-omniroute-auth` appears in the active plugin list (e.g. `opencode api get /api/plugin`).
+2. Confirm the `omniroute` provider is active with a driver package (`@opencode/ai/providers/openai-compatible` for `chat`, `@opencode/ai/providers/openai` for `responses`) and fetched models.
+3. Send a test request through an `omniroute/*` model.
+4. Reload or remove the plugin to verify cleanup.
+
 ## Usage
 
 Once connected, OpenCode will automatically use OmniRoute for AI requests:

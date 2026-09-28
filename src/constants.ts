@@ -4,6 +4,22 @@
 export const OMNIROUTE_PROVIDER_ID = 'omniroute';
 
 /**
+ * Plugin definition ID shared by the V1 and V2 entry points.
+ */
+export const OMNIROUTE_PLUGIN_ID = 'opencode-omniroute-auth';
+
+/**
+ * OpenCode V2 provider driver package IDs.
+ *
+ * V2 loads provider drivers from its bundled `@opencode/ai` registry instead
+ * of the AI-SDK npm packages used by V1:
+ * - chat mode  -> openai-compatible driver (/chat/completions)
+ * - responses mode -> openai driver (/responses)
+ */
+export const OMNIROUTE_CHAT_PROVIDER_PACKAGE = '@opencode/ai/providers/openai-compatible';
+export const OMNIROUTE_RESPONSES_PROVIDER_PACKAGE = '@opencode/ai/providers/openai';
+
+/**
  * Default OmniRoute API endpoints
  */
 export const OMNIROUTE_ENDPOINTS = {
