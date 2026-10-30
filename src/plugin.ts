@@ -242,6 +242,7 @@ export function createRuntimeConfig(
   const modelMetadata = getModelMetadataConfig(options);
   const modelNameDisplay = getModelNameDisplay(options);
   const hideModelAliases = getHideModelAliases(options);
+  const headers = getHeadersConfig(options);
 
   return {
     baseUrl,
@@ -253,6 +254,7 @@ export function createRuntimeConfig(
     modelMetadata,
     modelNameDisplay,
     hideModelAliases,
+    headers,
   };
 }
 
@@ -420,6 +422,17 @@ function getHideModelAliases(options: Record<string, unknown> | undefined): bool
     return value;
   }
   return undefined;
+}
+
+function getHeadersConfig(options: Record<string, unknown> | undefined): Record<string, string> | undefined {
+  const raw = getStringRecord(options?.headers);
+  if (!raw) return undefined;
+
+  const resolved: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    resolved[key] = resolveEnvTemplate(value);
+  }
+  return resolved;
 }
 
 function getModelsDevConfig(options: Record<string, unknown> | undefined): OmniRouteModelsDevConfig | undefined {
@@ -1098,6 +1111,12 @@ function createFetchInterceptor(
 
     headers.set('Authorization', `Bearer ${config.apiKey}`);
     headers.set('Content-Type', 'application/json');
+
+    if (config.headers) {
+      for (const [key, value] of Object.entries(config.headers)) {
+        headers.set(key, value);
+      }
+    }
 
     const sanitizedBody = await sanitizeRequestPayload(input, init, url);
 

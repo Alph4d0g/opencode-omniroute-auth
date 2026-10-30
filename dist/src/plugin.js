@@ -150,6 +150,7 @@ export function createRuntimeConfig(options, apiKey) {
     const modelMetadata = getModelMetadataConfig(options);
     const modelNameDisplay = getModelNameDisplay(options);
     const hideModelAliases = getHideModelAliases(options);
+    const headers = getHeadersConfig(options);
     return {
         baseUrl,
         apiKey,
@@ -160,6 +161,7 @@ export function createRuntimeConfig(options, apiKey) {
         modelMetadata,
         modelNameDisplay,
         hideModelAliases,
+        headers,
     };
 }
 export async function readAuthFromStore(providerId) {
@@ -296,6 +298,16 @@ function getHideModelAliases(options) {
         return value;
     }
     return undefined;
+}
+function getHeadersConfig(options) {
+    const raw = getStringRecord(options?.headers);
+    if (!raw)
+        return undefined;
+    const resolved = {};
+    for (const [key, value] of Object.entries(raw)) {
+        resolved[key] = resolveEnvTemplate(value);
+    }
+    return resolved;
 }
 function getModelsDevConfig(options) {
     const raw = options?.modelsDev;
@@ -853,6 +865,11 @@ function createFetchInterceptor(config) {
         }
         headers.set('Authorization', `Bearer ${config.apiKey}`);
         headers.set('Content-Type', 'application/json');
+        if (config.headers) {
+            for (const [key, value] of Object.entries(config.headers)) {
+                headers.set(key, value);
+            }
+        }
         const sanitizedBody = await sanitizeRequestPayload(input, init, url);
         // Clone init to avoid mutating original
         const modifiedInit = {

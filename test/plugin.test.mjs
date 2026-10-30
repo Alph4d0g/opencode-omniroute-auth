@@ -310,6 +310,64 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
   assert.equal(externalHeaders.get('Authorization'), null);
 });
 
+test('loader forwards configured extra headers only to OmniRoute URLs', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    calls.push({ url, init });
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(),
+      apiMode: 'chat',
+      headers: {
+        'CF-Access-Client-Id': 'client-id-value',
+        'CF-Access-Client-Secret': 'client-secret-value',
+      },
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+
+  await interceptedFetch('https://example.com/not-omniroute', {
+    method: 'POST',
+    body: JSON.stringify({ value: true }),
+  });
+
+  const omnirouteCall = calls.find((call) => call.url.includes('/chat/completions'));
+  const externalCall = calls.find((call) => call.url.includes('example.com/not-omniroute'));
+
+  const omnirouteHeaders = new Headers(omnirouteCall.init?.headers);
+  assert.equal(omnirouteHeaders.get('Authorization'), 'Bearer secret-key');
+  assert.equal(omnirouteHeaders.get('CF-Access-Client-Id'), 'client-id-value');
+  assert.equal(omnirouteHeaders.get('CF-Access-Client-Secret'), 'client-secret-value');
+
+  const externalHeaders = new Headers(externalCall.init?.headers);
+  assert.equal(externalHeaders.get('CF-Access-Client-Id'), null);
+});
+
 test('chat completion excludes cached tokens from JSON prompt tokens', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 

@@ -166,6 +166,7 @@ The plugin works out-of-the-box with just a base URL and a key. All options live
 | `modelMetadata` | object \| array | — | Override/add metadata for custom/virtual models (RegExp matchers work in `opencode.js`). |
 | `modelNameDisplay` | `'name' \| 'id' \| 'prefixed'` | `name` | Use model `name` (default), `id`, or provider-prefixed name in the model picker. |
 | `hideModelAliases` | boolean | `false` | Hide alias models that have a `parent` field in `/v1/models`. |
+| `headers` | `Record<string, string>` | — | Extra HTTP headers sent with every request to `baseURL`, in addition to `Authorization` and `Content-Type`. Useful for a reverse proxy/gateway in front of OmniRoute that needs its own credentials, e.g. Cloudflare Access service tokens. |
 
 Full V2 example:
 
@@ -180,7 +181,11 @@ Full V2 example:
         "refreshOnList": true,
         "modelCacheTtl": 300000,
         "modelNameDisplay": "name",
-        "hideModelAliases": false
+        "hideModelAliases": false,
+        "headers": {
+          "CF-Access-Client-Id": "{env:CF_ACCESS_CLIENT_ID}",
+          "CF-Access-Client-Secret": "{env:CF_ACCESS_CLIENT_SECRET}"
+        }
       }
     }
   ]

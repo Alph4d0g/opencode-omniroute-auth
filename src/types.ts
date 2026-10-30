@@ -154,6 +154,14 @@ export interface OmniRouteConfig {
   modelNameDisplay?: 'name' | 'id' | 'prefixed';
   /** Hide alias models that have a `parent` field in `/v1/models`. */
   hideModelAliases?: boolean;
+  /**
+   * Extra HTTP headers to attach to every request sent to the OmniRoute
+   * base URL, in addition to `Authorization` and `Content-Type`. Useful for
+   * endpoints fronted by a reverse proxy or gateway that requires its own
+   * credentials, such as Cloudflare Access service tokens
+   * (`CF-Access-Client-Id` / `CF-Access-Client-Secret`).
+   */
+  headers?: Record<string, string>;
 }
 
 export interface OmniRouteProviderModelModalities {
