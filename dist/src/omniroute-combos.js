@@ -1,0 +1,306 @@
+import { modelsDevToMetadata, calculateLowestCommonCapabilities, resolveProviderAlias, normalizeModelKey, } from './models-dev.js';
+import { REQUEST_TIMEOUT, OMNIROUTE_ENDPOINTS } from './constants.js';
+import { warn, debug } from './logger.js';
+import { createDiscoveryHeaders, getDiscoveryCacheKey } from './discovery.js';
+export function sanitizeForLog(value) {
+    // Remove all control characters except tab (0x09)
+    return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
+// In-memory combo caches scoped to endpoint and authentication context.
+const comboCache = new Map();
+const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+/**
+ * Fetch combo data from OmniRoute /v1/combos endpoint
+ * Falls back to /api/combos on HTTP 404 for older OmniRoute versions.
+ */
+export async function fetchComboData(config) {
+    const baseUrl = (config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL).replace(/\/+$/, '');
+    const apiKey = config.apiKey;
+    const cacheKey = getDiscoveryCacheKey(config, apiKey);
+    // Check cache first
+    const cached = comboCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < COMBO_CACHE_TTL) {
+        debug('Using cached combo data');
+        return cached.combos;
+    }
+    const v1CombosUrl = `${baseUrl.replace(/\/$/, '')}${OMNIROUTE_ENDPOINTS.COMBOS}`;
+    const legacyCombosUrl = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
+    async function tryFetch(url, allow404Fallback) {
+        debug(`Fetching combo data from ${url}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: createDiscoveryHeaders(config, apiKey),
+                signal: controller.signal,
+            });
+            if (!response.ok) {
+                if (allow404Fallback && response.status === 404) {
+                    debug(`Combo endpoint ${url} returned 404, will try legacy endpoint`);
+                    return { kind: 'notFound' };
+                }
+                warn(`Failed to fetch combo data: ${response.status}`);
+                return { kind: 'error' };
+            }
+            const data = (await response.json());
+            // Normalize both response shapes: legacy `.combos` takes precedence over proxy `.data`
+            const combosArray = Array.isArray(data?.combos)
+                ? data.combos
+                : Array.isArray(data?.data)
+                    ? data.data
+                    : null;
+            if (!combosArray) {
+                warn('Invalid combo data structure');
+                return { kind: 'error' };
+            }
+            // Build lookup map
+            const comboMap = new Map();
+            for (const combo of combosArray) {
+                if (combo?.name) {
+                    comboMap.set(combo.name, combo);
+                }
+            }
+            // Update cache
+            comboCache.set(cacheKey, {
+                combos: comboMap,
+                timestamp: Date.now(),
+            });
+            debug(`Successfully fetched ${comboMap.size} combos from ${url}`);
+            return { kind: 'success', combos: comboMap };
+        }
+        catch (error) {
+            warn(`Error fetching combo data: ${error}`);
+            return { kind: 'error' };
+        }
+        finally {
+            clearTimeout(timeoutId);
+        }
+    }
+    const v1Outcome = await tryFetch(v1CombosUrl, true);
+    if (v1Outcome.kind === 'success') {
+        return v1Outcome.combos;
+    }
+    if (v1Outcome.kind === 'error') {
+        return null;
+    }
+    const legacyOutcome = await tryFetch(legacyCombosUrl, false);
+    return legacyOutcome.kind === 'success' ? legacyOutcome.combos : null;
+}
+/**
+ * Clear the combo cache
+ */
+export function clearComboCache() {
+    comboCache.clear();
+    debug('Combo cache cleared');
+}
+/**
+ * Resolve a model ID to its underlying models
+ * For combo models, returns the combo's model list
+ * For regular models, returns [modelId]
+ */
+export async function resolveUnderlyingModels(modelId, config) {
+    // Fetch combo data
+    const combos = await fetchComboData(config);
+    if (!combos) {
+        return [modelId];
+    }
+    // Check if this is a combo model
+    const combo = combos.get(modelId);
+    if (combo) {
+        debug(`Resolved combo "${sanitizeForLog(modelId)}" to ${combo.models.length} underlying models`);
+        return combo.models
+            .map((m) => {
+            if (typeof m === 'string')
+                return m;
+            if (m && typeof m === 'object') {
+                const modelId = m.model ?? m.id;
+                if (typeof modelId === 'string')
+                    return modelId;
+            }
+            warn(`Unexpected model entry in combo: ${JSON.stringify(m)}`);
+            return null;
+        })
+            .filter((m) => m !== null);
+    }
+    // Not a combo, return as-is
+    return [modelId];
+}
+/**
+ * Look up a model in the models.dev index
+ * Handles provider/modelId format (e.g., "openai/gpt-4o")
+ */
+export function lookupModelInIndex(modelId, modelsDevIndex, config) {
+    if (!modelsDevIndex)
+        return null;
+    // Parse provider/model format
+    const { providerKey, modelKey } = splitModelId(modelId);
+    // Resolve provider alias
+    const providerAlias = providerKey
+        ? resolveProviderAlias(providerKey, config)
+        : null;
+    const lookupKey = modelKey.toLowerCase();
+    const normalizedKey = normalizeModelKey(modelKey);
+    // Try provider-specific lookups first
+    if (providerAlias) {
+        // Try exact match
+        const providerExact = modelsDevIndex.exactByProvider.get(providerAlias)?.get(lookupKey);
+        if (providerExact)
+            return providerExact;
+        // Try normalized match
+        const providerNorm = modelsDevIndex.normalizedByProvider.get(providerAlias)?.get(normalizedKey);
+        if (providerNorm)
+            return providerNorm;
+    }
+    // Try global exact match
+    const globalExactList = modelsDevIndex.exactGlobal.get(lookupKey);
+    if (globalExactList?.length === 1) {
+        return globalExactList[0];
+    }
+    // Try global normalized match
+    const globalNormList = modelsDevIndex.normalizedGlobal.get(normalizedKey);
+    if (globalNormList?.length === 1) {
+        return globalNormList[0];
+    }
+    // If multiple matches, try to disambiguate by provider
+    if (globalExactList && globalExactList.length > 1 && providerAlias) {
+        const byProvider = globalExactList.find(m => {
+            // Find which provider this model belongs to
+            for (const [pKey, pMap] of modelsDevIndex.exactByProvider.entries()) {
+                if (pMap.get(lookupKey) === m && pKey === providerAlias) {
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (byProvider)
+            return byProvider;
+    }
+    // Return first match as fallback
+    return globalExactList?.[0] ?? globalNormList?.[0] ?? null;
+}
+/**
+ * Split a model ID into provider and model key
+ * Handles formats like "provider/model", "omniroute/provider/model", etc.
+ */
+export function splitModelId(modelId) {
+    const trimmed = modelId.trim();
+    // Remove omniroute prefix if present
+    const withoutPrefix = trimmed.replace(/^omniroute\//, '');
+    // Split by /
+    const parts = withoutPrefix.split('/').filter(p => p.trim() !== '');
+    if (parts.length >= 2) {
+        return {
+            providerKey: parts[0] ?? null,
+            modelKey: parts.slice(1).join('/'),
+        };
+    }
+    // No provider prefix
+    return {
+        providerKey: null,
+        modelKey: withoutPrefix,
+    };
+}
+/**
+ * Calculate capabilities for a model by resolving its underlying models
+ * and computing lowest common capabilities
+ */
+export async function calculateModelCapabilities(model, config, modelsDevIndex) {
+    // If not a combo model and already has capabilities, use existing
+    if (model.contextWindow !== undefined && model.maxTokens !== undefined) {
+        return {};
+    }
+    // Resolve underlying models
+    const underlyingModels = await resolveUnderlyingModels(model.id, config);
+    // If it's not a combo (single model), just look it up directly
+    if (underlyingModels.length === 1 && underlyingModels[0] === model.id) {
+        const match = lookupModelInIndex(model.id, modelsDevIndex, config);
+        if (match) {
+            return modelsDevToMetadata(match);
+        }
+        return {};
+    }
+    // It's a combo - lookup all underlying models
+    debug(`Calculating capabilities for combo "${sanitizeForLog(model.id)}" from ${underlyingModels.length} models`);
+    const resolvedModels = [];
+    const unresolvedModels = [];
+    for (const underlyingId of underlyingModels) {
+        const match = lookupModelInIndex(underlyingId, modelsDevIndex, config);
+        if (match) {
+            resolvedModels.push(match);
+        }
+        else {
+            unresolvedModels.push(underlyingId);
+        }
+    }
+    if (unresolvedModels.length > 0) {
+        warn(`Could not resolve ${unresolvedModels.length} underlying models for "${sanitizeForLog(model.id)}": ${unresolvedModels.map(sanitizeForLog).join(', ')}`);
+    }
+    if (resolvedModels.length === 0) {
+        warn(`No models.dev matches found for combo "${sanitizeForLog(model.id)}"`);
+        return {};
+    }
+    debug(`Resolved ${resolvedModels.length}/${underlyingModels.length} underlying models for "${sanitizeForLog(model.id)}"`);
+    // Calculate lowest common capabilities
+    const capabilities = calculateLowestCommonCapabilities(resolvedModels);
+    debug(`Calculated capabilities for "${sanitizeForLog(model.id)}": context=${capabilities.contextWindow ?? 'N/A'}, maxTokens=${capabilities.maxTokens ?? 'N/A'}, vision=${capabilities.supportsVision ?? false}, tools=${capabilities.supportsTools ?? false}`);
+    return capabilities;
+}
+/**
+ * Check if a model is a combo model
+ */
+export function isComboModel(model) {
+    // Check owned_by field if available (from /v1/models response)
+    // The plugin may receive models from the API with owned_by field
+    const ownedBy = model?.owned_by;
+    if (ownedBy === 'combo') {
+        return true;
+    }
+    // Fallback: check if it's in our combo cache
+    if ([...comboCache.values()].some((cached) => cached.combos.has(model.id))) {
+        return true;
+    }
+    return false;
+}
+/**
+ * Enrich models with combo-specific capabilities
+ * This should be called after models.dev enrichment
+ */
+export async function enrichComboModels(models, config, modelsDevIndex) {
+    // Pre-fetch combo data to identify combo models
+    const combos = await fetchComboData(config);
+    if (!combos) {
+        return models;
+    }
+    return Promise.all(models.map(async (model) => {
+        // Check if this is a combo model
+        const isCombo = combos.has(model.id);
+        if (!isCombo) {
+            return model;
+        }
+        debug(`Enriching combo model: ${sanitizeForLog(model.id)}`);
+        // Calculate capabilities for this combo
+        const capabilities = await calculateModelCapabilities(model, config, modelsDevIndex);
+        // Merge capabilities with existing model data (capabilities take precedence)
+        return {
+            ...model,
+            ...(capabilities.name !== undefined ? { name: capabilities.name } : {}),
+            ...(capabilities.contextWindow !== undefined ? { contextWindow: capabilities.contextWindow } : {}),
+            ...(capabilities.maxTokens !== undefined ? { maxTokens: capabilities.maxTokens } : {}),
+            ...(capabilities.supportsVision !== undefined ? { supportsVision: capabilities.supportsVision } : {}),
+            ...(capabilities.supportsTools !== undefined ? { supportsTools: capabilities.supportsTools } : {}),
+            ...(capabilities.supportsTemperature !== undefined
+                ? { supportsTemperature: capabilities.supportsTemperature }
+                : {}),
+            ...(capabilities.supportsReasoning !== undefined
+                ? { supportsReasoning: capabilities.supportsReasoning }
+                : {}),
+            ...(capabilities.supportsAttachment !== undefined
+                ? { supportsAttachment: capabilities.supportsAttachment }
+                : {}),
+            ...(capabilities.supportsStreaming !== undefined ? { supportsStreaming: capabilities.supportsStreaming } : {}),
+            ...(capabilities.pricing !== undefined ? { pricing: { ...model.pricing, ...capabilities.pricing } } : {}),
+        };
+    }));
+}
+//# sourceMappingURL=omniroute-combos.js.map

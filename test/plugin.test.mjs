@@ -1,10 +1,23 @@
+import { mkdirSync, writeFileSync, utimesSync } from 'fs';
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, rm } from 'fs/promises';
+import { mkdir, writeFile, readFile, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import OmniRouteAuthPlugin from '../dist/index.js';
+// Isolate logger output for plugin tests so warning assertions can read the log file.
+const PLUGIN_TEST_DATA_HOME = join(tmpdir(), `opencode-plugin-tests-${Date.now()}`);
+process.env.XDG_DATA_HOME = PLUGIN_TEST_DATA_HOME;
+const PLUGIN_LOG_DIR = join(PLUGIN_TEST_DATA_HOME, 'opencode', 'log');
+const PLUGIN_LOG_FILE = join(PLUGIN_LOG_DIR, 'omniroute.log');
+mkdirSync(PLUGIN_LOG_DIR, { recursive: true });
+writeFileSync(PLUGIN_LOG_FILE, '');
+// Ensure this file wins mtime races against any previously-created test logs.
+utimesSync(PLUGIN_LOG_FILE, Date.now() / 1000, (Date.now() / 1000) + 1000);
+
+import pluginEntry from '../dist/index.js';
+// V1 hosts (>=1.18.29) support object entrypoints and call entry.server().
+const OmniRouteAuthPlugin = pluginEntry.server ?? pluginEntry;
 import { clearModelCache } from '../dist/runtime.js';
 import { clearModelsDevCache } from '../dist/src/models-dev.js';
 
@@ -56,6 +69,7 @@ async function createTempAuthHome(auth = { omniroute: { type: 'api', key: 'test-
 
 test('config hook applies defaults and normalized apiMode', async () => {
   const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
   const config = {
     provider: {
       omniroute: {
@@ -72,6 +86,172 @@ test('config hook applies defaults and normalized apiMode', async () => {
   assert.equal(config.provider.omniroute.api, 'chat');
   assert.equal(config.provider.omniroute.options.apiMode, 'chat');
   assert.equal(config.provider.omniroute.options.baseURL, 'http://localhost:20128/v1');
+});
+
+test('config hook selects provider package for chat apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'chat',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.api, 'chat');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai-compatible');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai-compatible');
+});
+
+test('config hook selects provider package for responses apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        npm: '@ai-sdk/openai-compatible',
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'responses',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.api, 'responses');
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
+});
+
+test('provider hook selects model package for responses apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      npm: '@ai-sdk/openai-compatible',
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+      models: {},
+    },
+    { auth: undefined },
+  );
+
+  assert.equal(result['gpt-4o'].api.npm, '@ai-sdk/openai');
+});
+
+test('provider hook preserves custom provider package', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      npm: 'custom-ai-sdk-provider',
+      options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+      models: {},
+    },
+    { auth: undefined },
+  );
+
+  assert.equal(result['gpt-4o'].api.npm, 'custom-ai-sdk-provider');
+});
+
+test('config hook reconciles explicit model npm when provider package changes', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        npm: '@ai-sdk/openai-compatible',
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'responses',
+        },
+        models: {
+          'gpt-4o': {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            providerID: 'omniroute',
+            api: { id: 'gpt-4o', url: getDummyBaseUrl(), npm: '@ai-sdk/openai-compatible' },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.npm, '@ai-sdk/openai');
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
+});
+
+test('auth loader selects provider package for responses apiMode', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.equal(provider.models['gpt-4.1-mini'].api.npm, '@ai-sdk/openai');
+});
+
+test('config hook refreshes legacy-generated models with responses npm', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        api: 'responses',
+        npm: '@ai-sdk/openai',
+        options: {
+          baseURL: getDummyBaseUrl(),
+          apiMode: 'responses',
+        },
+        models: {
+          'gpt-4o': {
+            id: 'gpt-4o',
+            name: 'GPT-4o',
+            providerID: 'omniroute',
+            api: { id: 'gpt-4o', url: getDummyBaseUrl(), npm: '@ai-sdk/openai' },
+          },
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  assert.equal(config.provider.omniroute.models['gpt-4o'].api.npm, '@ai-sdk/openai');
 });
 
 test('loader injects auth headers only for OmniRoute URLs', async () => {
@@ -130,6 +310,356 @@ test('loader injects auth headers only for OmniRoute URLs', async () => {
   assert.equal(externalHeaders.get('Authorization'), null);
 });
 
+test('loader forwards configured extra headers only to OmniRoute URLs', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const calls = [];
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    calls.push({ url, init });
+
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(),
+      apiMode: 'chat',
+      headers: {
+        'CF-Access-Client-Id': 'client-id-value',
+        'CF-Access-Client-Secret': 'client-secret-value',
+      },
+    },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+
+  await interceptedFetch('https://example.com/not-omniroute', {
+    method: 'POST',
+    body: JSON.stringify({ value: true }),
+  });
+
+  const omnirouteCall = calls.find((call) => call.url.includes('/chat/completions'));
+  const externalCall = calls.find((call) => call.url.includes('example.com/not-omniroute'));
+
+  const omnirouteHeaders = new Headers(omnirouteCall.init?.headers);
+  assert.equal(omnirouteHeaders.get('Authorization'), 'Bearer secret-key');
+  assert.equal(omnirouteHeaders.get('CF-Access-Client-Id'), 'client-id-value');
+  assert.equal(omnirouteHeaders.get('CF-Access-Client-Secret'), 'client-secret-value');
+
+  const externalHeaders = new Headers(externalCall.init?.headers);
+  assert.equal(externalHeaders.get('CF-Access-Client-Id'), null);
+});
+
+test('chat completion excludes cached tokens from JSON prompt tokens', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-test',
+        object: 'chat.completion',
+        choices: [],
+        usage: {
+          prompt_tokens: 39493,
+          completion_tokens: 185,
+          total_tokens: 39678,
+          prompt_tokens_details: { cached_tokens: 36864 },
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+  const body = await response.json();
+
+  assert.equal(body.usage.prompt_tokens, 2629);
+  assert.equal(body.usage.completion_tokens, 185);
+  assert.equal(body.usage.total_tokens, 2814);
+  assert.equal(body.usage.prompt_tokens_details.cached_tokens, 36864);
+});
+
+test('chat completion excludes cached tokens from streaming prompt tokens', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const contentChunk = 'data: {"choices":[{"delta":{"content":"hi"},"index":0}]}';
+  const usageChunk = [
+    'data: {"choices":[],"usage":{',
+    '"prompt_tokens":39493,',
+    '"completion_tokens":185,',
+    '"total_tokens":39678,',
+    '"prompt_tokens_details":{"cached_tokens":36864}}}',
+  ].join('');
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(`${contentChunk}\n\n${usageChunk}\n\ndata: [DONE]`, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [], stream: true }),
+  });
+  const text = await response.text();
+  const normalizedLine = text
+    .split('\n')
+    .find((line) => line.includes('"prompt_tokens"'));
+
+  assert.ok(text.includes(contentChunk));
+  assert.ok(text.endsWith('\n'));
+  assert.ok(normalizedLine);
+  const normalized = JSON.parse(normalizedLine.slice('data: '.length));
+  assert.equal(normalized.usage.prompt_tokens, 2629);
+  assert.equal(normalized.usage.completion_tokens, 185);
+  assert.equal(normalized.usage.total_tokens, 2814);
+  assert.equal(normalized.usage.prompt_tokens_details.cached_tokens, 36864);
+});
+
+test('chat completion leaves JSON prompt tokens unchanged when cached_tokens is zero', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: 'chatcmpl-test',
+        object: 'chat.completion',
+        choices: [],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 10,
+          total_tokens: 110,
+          prompt_tokens_details: { cached_tokens: 0 },
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+  const body = await response.json();
+
+  assert.equal(body.usage.prompt_tokens, 100);
+  assert.equal(body.usage.total_tokens, 110);
+});
+
+test('chat completion passes through non-OK responses unchanged', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({ error: 'bad request' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error, 'bad request');
+});
+
+test('chat completion passes through malformed JSON unchanged', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response('not valid json', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [] }),
+  });
+  const text = await response.text();
+
+  assert.equal(text, 'not valid json');
+});
+
+test('chat completion streaming passes through content-only chunks unchanged', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  const contentChunk = 'data: {"choices":[{"delta":{"content":"hi"},"index":0}]}';
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(`${contentChunk}\n\ndata: [DONE]`, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [], stream: true }),
+  });
+  const text = await response.text();
+
+  assert.ok(text.includes(contentChunk));
+  assert.ok(text.includes('data: [DONE]'));
+});
+
+test('chat completion streaming preserves CRLF boundaries split across chunks', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const encoder = new TextEncoder();
+    // Split a CRLF across two chunks: first chunk ends with '\r', second starts with '\n'
+    const chunk1 = encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\r');
+    const chunk2 = encoder.encode('\ndata: [DONE]');
+
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk1);
+          controller.enqueue(chunk2);
+          controller.close();
+        },
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      },
+    );
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const response = await options.fetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'gpt-4.1-mini', messages: [], stream: true }),
+  });
+  const text = await response.text();
+
+  // Should not inject an empty line between the data event and [DONE]
+  assert.ok(text.includes('data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\ndata: [DONE]'));
+  assert.ok(!text.includes('\n\n\ndata: [DONE]'), 'should not produce extra blank lines');
+});
+
 test('auth loader applies user modelMetadata override to provider models', async () => {
   const plugin = await OmniRouteAuthPlugin({});
 
@@ -167,6 +697,44 @@ test('auth loader applies user modelMetadata override to provider models', async
   await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
 
   assert.equal(provider.models['codex/gpt-5.5'].limit.context, 512000);
+});
+
+test('provider models fall back to the OpenCode-equivalent output limit when the model reports none', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'cx/gpt-5.5', name: 'GPT-5.5', contextWindow: 512000, maxTokens: 65536 },
+            { id: 'cx/gpt-5.5-mini', name: 'GPT-5.5 Mini', contextWindow: 200000 },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: {
+      baseURL: getDummyBaseUrl(20134),
+      apiMode: 'chat',
+    },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  assert.equal(provider.models['codex/gpt-5.5'].limit.output, 65536);
+  assert.deepEqual(provider.models['codex/gpt-5.5-mini'].limit, { context: 200000, output: 32000 });
 });
 
 test('gemini tool schema payload is sanitized before forwarding', async () => {
@@ -287,6 +855,464 @@ test('non-gemini payload keeps original tool schema fields', async () => {
     forwardedBody.tools[0].function.parameters.$schema,
     'https://json-schema.org/draft/2020-12/schema',
   );
+});
+
+test('claude title requests strip reasoning_effort before forwarding', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      temperature: 0.5,
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title. Nothing else.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+  assert.equal(forwardedBody.temperature, 0.5);
+});
+
+test('claude non-title requests keep reasoning_effort before forwarding', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-sonnet-4-6',
+      temperature: 1,
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'user',
+          content: 'Explain this bug.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, 'low');
+  assert.equal(forwardedBody.temperature, 1);
+});
+
+test('claude title requests strip reasoning_effort from instructions field', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      temperature: 0.5,
+      reasoning_effort: 'low',
+      instructions: 'You are a title generator. You output ONLY a thread title.',
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+  assert.equal(forwardedBody.temperature, 0.5);
+});
+
+test('claude title requests strip reasoning_effort from input array', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/responses`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      input: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests strip reasoning_effort when messages lacks title but input has it', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'responses' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/responses`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      messages: [{ role: 'user', content: 'Hi' }],
+      input: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests strip reasoning_effort from top-level system field', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      system: 'You are a title generator. You output ONLY a thread title.',
+      messages: [{ role: 'user', content: 'Hi' }],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests detect title markers case-insensitively', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'claude/claude-haiku-4-5-20251001',
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: [
+            { type: 'text', text: 'you are a title generator' },
+            { type: 'text', text: 'output a thread title' },
+          ],
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, undefined);
+});
+
+test('claude title requests strip camelCase reasoningEffort', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'anthropic/claude-haiku-4-5-20251001',
+      reasoningEffort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoningEffort, undefined);
+});
+
+test('non-claude title requests keep reasoning_effort before forwarding', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let forwardedBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    forwardedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      model: 'openai/gpt-4.1-mini',
+      reasoning_effort: 'low',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a title generator. You output ONLY a thread title.',
+        },
+      ],
+    }),
+  });
+
+  assert.ok(forwardedBody);
+  assert.equal(forwardedBody.reasoning_effort, 'low');
+});
+
+test('non-claude payloads are not re-stringified unnecessarily', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  let rawBody;
+
+  global.fetch = async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(JSON.stringify(createModelsResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    rawBody = typeof init?.body === 'string' ? init.body : null;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat' },
+    models: {},
+  };
+
+  const options = await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+  const interceptedFetch = options.fetch;
+
+  const originalBody = JSON.stringify({
+    model: 'openai/gpt-4.1-mini',
+    temperature: 1,
+    reasoning_effort: 'low',
+    messages: [{ role: 'user', content: 'Explain this bug.' }],
+  });
+
+  await interceptedFetch(`${getDummyBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    body: originalBody,
+  });
+
+  assert.equal(rawBody, originalBody);
 });
 
 test('gemini schema sanitization applies to responses endpoint request objects', async () => {
@@ -1336,4 +2362,537 @@ test('provider hook creates synthetic base model when only variants are returned
   assert.equal(result['codex/gpt-5.5'].limit.context, 256000);
   assert.equal(result['codex/gpt-5.5-high'], undefined);
   assert.equal(result['codex/gpt-5.5-xhigh'], undefined);
+});
+
+test('provider hook uses model id as display name when modelNameDisplay is "id"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gh/gpt-5.5', name: 'GPT-5.5' },
+            { id: 'cx/gpt-5.5', name: 'GPT-5.5' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat', modelNameDisplay: 'id' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  // Plugin remaps aliases to canonical keys (gh→github, cx→codex)
+  // With modelNameDisplay:'id' the name field reflects the canonical id
+  assert.ok(result['github/gpt-5.5'] || result['gh/gpt-5.5'], 'expected github/gpt-5.5 entry');
+  assert.ok(result['codex/gpt-5.5'] || result['cx/gpt-5.5'], 'expected codex/gpt-5.5 entry');
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  const cxEntry = result['codex/gpt-5.5'] ?? result['cx/gpt-5.5'];
+  // name should equal the model's id (not the human-readable display name)
+  assert.equal(ghEntry.name, ghEntry.id);
+  assert.equal(cxEntry.name, cxEntry.id);
+});
+
+test('provider hook uses model name as display name by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gh/gpt-5.5', name: 'GPT-5.5' },
+            { id: 'cx/gpt-5.5', name: 'GPT-5.5' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  // Default: display name is the name field from /v1/models (not the id)
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
+  assert.equal(ghEntry.name, 'GPT-5.5');
+  assert.notEqual(ghEntry.name, ghEntry.id);
+});
+
+test('provider hook warns and falls back for invalid modelNameDisplay', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gh/gpt-5.5', name: 'GPT-5.5' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      // invalid value — should fall back to 'name' mode
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat', modelNameDisplay: 'invalid' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  // Falls back to 'name' mode on invalid value
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
+  assert.equal(ghEntry.name, 'GPT-5.5');
+});
+
+test('config hook uses model id as display name when modelNameDisplay is "id"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'chat',
+          modelNameDisplay: 'id',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  const entry = config.provider.omniroute.models['gpt-4o'] ?? config.provider.omniroute.models['gpt-4.1-mini'];
+  assert.ok(entry, 'expected default model entry');
+  assert.equal(entry.name, entry.id);
+});
+
+test('config hook uses model name as display name by default', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+  process.env.XDG_DATA_HOME = join(tmpdir(), `opencode-test-no-auth-${Date.now()}`);
+  const config = {
+    provider: {
+      omniroute: {
+        options: {
+          baseURL: 'http://localhost:20128/v1',
+          apiMode: 'chat',
+        },
+      },
+    },
+  };
+
+  await plugin.config(config);
+
+  const entry = config.provider.omniroute.models['gpt-4o'] ?? config.provider.omniroute.models['gpt-4.1-mini'];
+  assert.ok(entry, 'expected default model entry');
+  assert.notEqual(entry.name, entry.id);
+  assert.equal(entry.name, 'GPT-4o');
+});
+
+test('auth loader uses model id as display name when modelNameDisplay is "id"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gh/gpt-5.5', name: 'GPT-5.5' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const provider = {
+    options: { baseURL: getDummyBaseUrl(), apiMode: 'chat', modelNameDisplay: 'id' },
+    models: {},
+  };
+
+  await plugin.auth.loader(async () => ({ type: 'api', key: 'secret-key' }), provider);
+
+  const entry = provider.models['github/gpt-5.5'] ?? provider.models['gh/gpt-5.5'];
+  assert.ok(entry, 'expected github/gpt-5.5 entry');
+  assert.equal(entry.name, entry.id);
+});
+
+test('modelNameDisplay falls back to id when name is empty', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gh/gpt-5.5', name: '' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat', modelNameDisplay: 'invalid' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const ghEntry = result['github/gpt-5.5'] ?? result['gh/gpt-5.5'];
+  assert.ok(ghEntry, 'expected github/gpt-5.5 entry');
+  assert.equal(ghEntry.name, 'gh/gpt-5.5');
+});
+
+test('provider hook prefixes model names with provider origin when modelNameDisplay is "prefixed"', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'oc/big-pickle', name: 'Big Pickle', owned_by: 'opencode', parent: null },
+            {
+              id: 'opencode/big-pickle',
+              name: 'Big Pickle',
+              owned_by: 'opencode',
+              parent: 'oc/big-pickle',
+            },
+            {
+              id: 'oc/deepseek-v4-flash-free',
+              name: 'DeepSeek V4 Flash Free',
+              owned_by: 'opencode',
+              parent: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        modelNameDisplay: 'prefixed',
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  assert.ok(result['oc/big-pickle'], 'expected oc/big-pickle entry');
+  assert.ok(result['opencode/big-pickle'], 'expected opencode/big-pickle entry');
+  assert.equal(result['oc/big-pickle'].name, 'OpenCode Free / Big Pickle');
+  assert.equal(result['opencode/big-pickle'].name, 'OpenCode / Big Pickle');
+  assert.equal(
+    result['oc/deepseek-v4-flash-free'].name,
+    'OpenCode Free / DeepSeek V4 Flash Free',
+  );
+});
+
+test('provider hook hides alias models when hideModelAliases is true', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'oc/big-pickle', name: 'Big Pickle', owned_by: 'opencode', parent: null },
+            {
+              id: 'opencode/big-pickle',
+              name: 'Big Pickle',
+              owned_by: 'opencode',
+              parent: 'oc/big-pickle',
+            },
+            {
+              id: 'oc/deepseek-v4-flash-free',
+              name: 'DeepSeek V4 Flash Free',
+              owned_by: 'opencode',
+              parent: null,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        hideModelAliases: true,
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  assert.ok(result['oc/big-pickle'], 'expected canonical oc/big-pickle entry');
+  assert.equal(result['opencode/big-pickle'], undefined, 'alias should be hidden');
+  assert.ok(result['oc/deepseek-v4-flash-free'], 'expected non-alias deepseek entry');
+});
+
+test('provider hook uses raw origin prefix when no pretty label exists', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'custom-xyz/my-model', name: 'My Model', parent: null }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        modelNameDisplay: 'prefixed',
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const entry = result['custom-xyz/my-model'];
+  assert.ok(entry, 'expected custom-xyz/my-model entry');
+  assert.equal(entry.name, 'custom-xyz / My Model');
+});
+
+test('modelNameDisplay "prefixed" does not double-prefix an already prefixed name', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'oc/big-pickle', name: 'OpenCode Free / Big Pickle', parent: null }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: {
+        baseURL: 'http://localhost:20128/v1',
+        apiMode: 'chat',
+        modelNameDisplay: 'prefixed',
+      },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const entry = result['oc/big-pickle'];
+  assert.ok(entry, 'expected oc/big-pickle entry');
+  assert.equal(entry.name, 'OpenCode Free / Big Pickle');
+});
+
+test('effort_tiers drive variants and add a no-thinking variant', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            {
+              id: 'vllm/Qwen3.8-27B-FP8',
+              name: 'Qwen 3.8 27B FP8',
+              contextWindow: 262144,
+              supportsReasoning: true,
+              capabilities: {
+                reasoning: true,
+                effort_tiers: ['low', 'medium', 'xhigh'],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const variants = result['vllm/Qwen3.8-27B-FP8'].variants;
+  assert.ok(variants.low);
+  assert.equal(variants.low.reasoningEffort, 'low');
+  assert.ok(variants.medium);
+  assert.ok(variants.xhigh);
+  assert.equal(variants.xhigh.reasoningEffort, 'xhigh');
+  // the generic "high" must not be invented when the model advertises xhigh
+  assert.equal(variants.high, undefined);
+  // no-thinking disables thinking via the chat template, not reasoning_effort
+  assert.ok(variants['no-thinking']);
+  assert.equal(variants['no-thinking'].chat_template_kwargs.enable_thinking, false);
+});
+
+test('effort_tiers fall back to generic low/medium/high without advertised tiers', async () => {
+  const plugin = await OmniRouteAuthPlugin({});
+
+  global.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith('/v1/models')) {
+      return new Response(
+        JSON.stringify({
+          object: 'list',
+          data: [{ id: 'vendor/plain', name: 'Plain', supportsReasoning: true }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const result = await plugin.provider.models(
+    {
+      id: 'omniroute',
+      name: 'OmniRoute',
+      source: 'config',
+      env: [],
+      options: { baseURL: 'http://localhost:20128/v1', apiMode: 'chat' },
+      models: {},
+    },
+    { auth: { type: 'api', key: 'test-key' } },
+  );
+
+  const variants = result['vendor/plain'].variants;
+  assert.ok(variants.low);
+  assert.ok(variants.medium);
+  assert.ok(variants.high);
+  // no advertised tiers → no no-thinking variant is invented
+  assert.equal(variants['no-thinking'], undefined);
 });

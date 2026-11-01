@@ -54,6 +54,33 @@ export function warn(message: string): void {
   appendFile(logFile, line).catch(() => {});
 }
 
+/**
+ * Render an unknown thrown value as a readable message.
+ *
+ * `String(error)` yields `"[object Object]"` for thrown non-Error values, which
+ * hides the real cause in logs. Errors keep their name, plain objects are
+ * JSON-encoded, and everything else falls back to `String`.
+ */
+export function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message ? `${error.name}: ${error.message}` : error.name;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    try {
+      const json = JSON.stringify(error);
+      if (json && json !== '{}') return json;
+    } catch {
+      // Circular structure: fall through to the message/string fallbacks.
+    }
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message) return message;
+  }
+  return String(error);
+}
+
 export function debug(message: string): void {
   // Strict comparison: only "1" enables debug logging
   if (process.env.OMNIROUTE_DEBUG !== '1') return;

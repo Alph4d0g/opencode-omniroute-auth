@@ -15,6 +15,8 @@ export interface OmniRouteModel {
   supportsTemperature?: boolean;
   supportsReasoning?: boolean;
   supportsAttachment?: boolean;
+  /** Reasoning-effort tiers advertised by OmniRoute (e.g. `["low","medium","xhigh"]`). */
+  effortTiers?: string[];
 
   // OmniRoute native fields (snake_case from API)
   context_length?: number;
@@ -22,6 +24,11 @@ export interface OmniRouteModel {
   max_output_tokens?: number;
   vision?: boolean;
   tool_calling?: boolean;
+
+  // OpenAI-compatible model metadata fields used by OmniRoute
+  owned_by?: string;
+  root?: string;
+  parent?: string | null;
 
   // OmniRoute capabilities object
   capabilities?: {
@@ -32,6 +39,7 @@ export interface OmniRouteModel {
     attachment?: boolean;
     temperature?: boolean;
     toolcall?: boolean;
+    effort_tiers?: string[];
   };
 
   // Enriched fields from models.dev
@@ -127,6 +135,33 @@ export interface OmniRouteConfig {
   modelsDev?: OmniRouteModelsDevConfig;
   /** Optional metadata overrides/additions for custom/virtual models */
   modelMetadata?: OmniRouteModelMetadataConfig;
+  /**
+   * Controls how model names are displayed in the model picker.
+   *
+   * - `"name"` (default): use the `name` field returned by `/v1/models`
+   *   (e.g. `"GPT-5.5"`). When OmniRoute's `MODELS_CATALOG_PREFIX_MODE` is
+   *   set to `dual` (the default), different providers that serve the same
+   *   base model will all share the same display name, making them
+   *   indistinguishable in the picker.
+   * - `"id"`: use the model `id` instead (e.g. `"gh/gpt-5.5"`,
+   *   `"cx/gpt-5.5"`). Always unique per entry — useful when multiple
+   *   providers serve the same model or when OmniRoute name disambiguation
+   *   is not enabled.
+   * - `"prefixed"`: prefix the human-readable `name` with the provider
+   *   origin (e.g. `"OpenCode Free / Big Pickle"`). Combines readability
+   *   with disambiguation.
+   */
+  modelNameDisplay?: 'name' | 'id' | 'prefixed';
+  /** Hide alias models that have a `parent` field in `/v1/models`. */
+  hideModelAliases?: boolean;
+  /**
+   * Extra HTTP headers to attach to every request sent to the OmniRoute
+   * base URL, in addition to `Authorization` and `Content-Type`. Useful for
+   * endpoints fronted by a reverse proxy or gateway that requires its own
+   * credentials, such as Cloudflare Access service tokens
+   * (`CF-Access-Client-Id` / `CF-Access-Client-Secret`).
+   */
+  headers?: Record<string, string>;
 }
 
 export interface OmniRouteProviderModelModalities {

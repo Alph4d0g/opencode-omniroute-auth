@@ -289,6 +289,22 @@ test('logger excludes directories with .log suffix', async () => {
   rmSync(fakeDir, { recursive: true });
 });
 
+test('describeError renders Error, string, and object values readably', async () => {
+  const { describeError } = await import(`../dist/src/logger.js#${Date.now()}-${Math.random()}`);
+
+  assert.strictEqual(describeError(new Error('boom')), 'Error: boom');
+  assert.strictEqual(describeError(new TypeError('bad type')), 'TypeError: bad type');
+  assert.strictEqual(describeError('plain string'), 'plain string');
+  assert.strictEqual(describeError({ code: 42 }), '{"code":42}');
+  assert.strictEqual(describeError(123), '123');
+  assert.strictEqual(describeError(undefined), 'undefined');
+
+  // Circular structures cannot be JSON-encoded and fall back to String().
+  const circular = {};
+  circular.self = circular;
+  assert.strictEqual(describeError(circular), '[object Object]');
+});
+
 test('logger uses alphabetical tie-breaker for identical mtime', async () => {
   // Create two log files with identical mtime
   const fileA = join(LOG_DIR, 'test-alpha.log');

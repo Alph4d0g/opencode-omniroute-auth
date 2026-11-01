@@ -4,6 +4,22 @@
 export const OMNIROUTE_PROVIDER_ID = 'omniroute';
 
 /**
+ * Plugin definition ID shared by the V1 and V2 entry points.
+ */
+export const OMNIROUTE_PLUGIN_ID = 'opencode-omniroute-auth';
+
+/**
+ * OpenCode V2 provider driver package IDs.
+ *
+ * V2 loads provider drivers from its bundled `@opencode/ai` registry instead
+ * of the AI-SDK npm packages used by V1:
+ * - chat mode  -> openai-compatible driver (/chat/completions)
+ * - responses mode -> openai driver (/responses)
+ */
+export const OMNIROUTE_CHAT_PROVIDER_PACKAGE = '@opencode/ai/providers/openai-compatible';
+export const OMNIROUTE_RESPONSES_PROVIDER_PACKAGE = '@opencode/ai/providers/openai';
+
+/**
  * Default OmniRoute API endpoints
  */
 export const OMNIROUTE_ENDPOINTS = {
@@ -15,6 +31,8 @@ export const OMNIROUTE_ENDPOINTS = {
   CHAT_COMPLETIONS: '/chat/completions',
   /** Responses endpoint */
   RESPONSES: '/responses',
+  /** Combos endpoint */
+  COMBOS: '/combos',
 };
 
 /**
@@ -74,10 +92,19 @@ export const MODEL_CACHE_TTL = 5 * 60 * 1000;
 export const REQUEST_TIMEOUT = 30000;
 
 /**
- * Default model limits
+ * Default model context limit.
  */
 export const DEFAULT_CONTEXT_LIMIT = 128000;
-export const DEFAULT_OUTPUT_LIMIT = 4096;
+
+/**
+ * Default output-token limit for models whose upstream reports none.
+ *
+ * Mirrors OpenCode's own `OUTPUT_TOKEN_MAX` (32 000) so the fallback matches
+ * what OpenCode applies to models without a known limit. The field cannot
+ * simply be omitted: OpenCode rejects a model whose `limit` object lacks
+ * `output` (verified on 2.0.21 — such models fail with "Model unavailable").
+ */
+export const DEFAULT_OUTPUT_LIMIT = 32000;
 
 /**
  * models.dev enrichment defaults
@@ -96,4 +123,24 @@ export const PROVIDER_ALIAS_TO_CANONICAL: Record<string, string> = {
   cx: 'codex',
   kr: 'kiro',
   if: 'qoder',
+};
+
+/**
+ * Friendly display labels for provider origins.
+ * Used when modelNameDisplay is "prefixed".
+ */
+export const PROVIDER_DISPLAY_LABELS: Record<string, string> = {
+  oc: 'OpenCode Free',
+  opencode: 'OpenCode',
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic',
+  claude: 'Anthropic',
+  openai: 'OpenAI',
+  google: 'Google',
+  gemini: 'Google',
+  cx: 'Codex',
+  codex: 'Codex',
+  gh: 'GitHub',
+  github: 'GitHub',
+  antigravity: 'Antigravity',
 };

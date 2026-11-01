@@ -58,6 +58,7 @@ The loader returns a `fetch` function that:
 1. Adds `Authorization: Bearer <apiKey>` and `Content-Type: application/json` headers.
 2. Only intercepts requests to the configured OmniRoute base URL (with safe prefix matching).
 3. Sanitizes Gemini tool schemas by stripping `$schema`, `$ref`, `ref`, and `additionalProperties` keywords when the model name includes "gemini".
+4. Strips `reasoning_effort`/`reasoningEffort` from identified Claude title-generation requests (OpenCode's hidden title prompt) to avoid Anthropic OAuth temperature/thinking validation errors, while preserving reasoning options for normal Claude chat requests.
 
 ### Caching Strategy
 

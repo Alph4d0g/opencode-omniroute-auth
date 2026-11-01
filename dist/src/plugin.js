@@ -1,0 +1,909 @@
+import { homedir } from 'os';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
+import { OMNIROUTE_PROVIDER_ID, OMNIROUTE_DEFAULT_MODELS, OMNIROUTE_ENDPOINTS, DEFAULT_CONTEXT_LIMIT, PROVIDER_ALIAS_TO_CANONICAL, PROVIDER_DISPLAY_LABELS, } from './constants.js';
+import { buildReasoningVariants, fetchModels, resolveOutputLimit, resolveProviderAliasForMetadata, } from './models.js';
+import { warn, debug } from './logger.js';
+import { sanitizeForLog } from './omniroute-combos.js';
+import { isRecord, normalizeChatUsageResponse, sanitizeChatPayload } from './http-sanitize.js';
+const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
+const OMNIROUTE_CHAT_PROVIDER_NPM = '@ai-sdk/openai-compatible';
+const OMNIROUTE_RESPONSES_PROVIDER_NPM = '@ai-sdk/openai';
+const OMNIROUTE_PROVIDER_ENV = ['OMNIROUTE_API_KEY'];
+const RAW_MODEL_METADATA = Symbol('omniroute.rawModelMetadata');
+const RAW_MODEL_METADATA_OPTION = '__omnirouteRawModelMetadata';
+const MODELS_GENERATED_BY_PLUGIN = Symbol('omniroute.modelsGeneratedByPlugin');
+const MODELS_GENERATED_BY_PLUGIN_OPTION = '__omnirouteModelsGeneratedByPlugin';
+export const OmniRouteAuthPlugin = async (_input) => {
+    return {
+        config: async (config) => {
+            const providers = config.provider ?? {};
+            const existingProvider = providers[OMNIROUTE_PROVIDER_ID];
+            const baseUrl = getBaseUrl(existingProvider?.options);
+            const apiMode = getApiMode(existingProvider?.options);
+            const providerApi = resolveProviderApi(existingProvider?.api, apiMode);
+            const providerNpm = resolveProviderNpm(existingProvider?.npm, apiMode);
+            const rawUserModelMetadata = getRawUserModelMetadata(existingProvider?.options);
+            // Eagerly fetch models for OpenCode <=1.14.48 (which read models from config hook).
+            // OpenCode >=1.14.49 uses the provider hook below instead.
+            let models = OMNIROUTE_DEFAULT_MODELS;
+            try {
+                const auth = await readAuthFromStore(OMNIROUTE_PROVIDER_ID);
+                const apiKey = auth?.key ?? process.env.OMNIROUTE_API_KEY;
+                if (apiKey) {
+                    const runtimeConfig = createRuntimeConfig(existingProvider?.options ?? {}, apiKey);
+                    models = await fetchModels(runtimeConfig, apiKey, false);
+                }
+            }
+            catch (error) {
+                warn(`Eager model fetch failed, using defaults: ${error}`);
+            }
+            const effectiveModels = applyModelMetadataOverrides(models, rawUserModelMetadata);
+            const generatedModelMetadata = {};
+            for (const model of models) {
+                // Use canonical ID for metadata keys to match user config
+                const metadataKey = resolveProviderAliasForMetadata(model.id);
+                generatedModelMetadata[metadataKey] = {
+                    contextWindow: model.contextWindow,
+                    maxTokens: model.maxTokens,
+                    supportsTemperature: model.supportsTemperature,
+                    supportsReasoning: model.supportsReasoning,
+                    supportsAttachment: model.supportsAttachment,
+                    supportsVision: model.supportsVision,
+                    supportsTools: model.supportsTools,
+                    supportsStreaming: model.supportsStreaming,
+                    pricing: model.pricing,
+                };
+            }
+            const modelMetadata = mergeModelMetadata(rawUserModelMetadata, generatedModelMetadata);
+            const providerOptions = {
+                ...(existingProvider?.options ?? {}),
+                baseURL: baseUrl,
+                apiMode,
+                modelMetadata,
+            };
+            setRawUserModelMetadata(providerOptions, rawUserModelMetadata);
+            const shouldRefreshModels = shouldRefreshProviderModels(existingProvider);
+            const modelNameDisplay = getModelNameDisplay(existingProvider?.options);
+            const providerModels = shouldRefreshModels
+                ? toProviderModels(effectiveModels, baseUrl, providerNpm, modelNameDisplay)
+                : reconcileExplicitModels(existingProvider?.models, providerNpm, modelNameDisplay);
+            setModelsGeneratedByPlugin(providerOptions, shouldRefreshModels);
+            providers[OMNIROUTE_PROVIDER_ID] = {
+                ...existingProvider,
+                name: existingProvider?.name ?? OMNIROUTE_PROVIDER_NAME,
+                api: providerApi,
+                npm: providerNpm,
+                env: existingProvider?.env ?? OMNIROUTE_PROVIDER_ENV,
+                options: providerOptions,
+                models: providerModels,
+            };
+            config.provider = providers;
+        },
+        // Provider hook for OpenCode >=1.14.49
+        provider: {
+            id: OMNIROUTE_PROVIDER_ID,
+            models: async (provider, ctx) => {
+                const baseUrl = getBaseUrl(provider.options);
+                const providerNpm = resolveProviderNpm(isRecord(provider) ? provider.npm : undefined, isRecord(provider) ? getApiMode(provider.options) : 'chat');
+                // Auth available — fetch /v1/models (fetchModels falls back to defaults on error)
+                if (ctx.auth?.type === 'api' && ctx.auth.key) {
+                    const runtimeConfig = createRuntimeConfig(provider.options, ctx.auth.key);
+                    const models = await fetchModels(runtimeConfig, ctx.auth.key, false);
+                    const effectiveModels = applyModelMetadataOverrides(models, getRawUserModelMetadata(provider.options));
+                    return toProviderModels(effectiveModels, baseUrl, providerNpm, runtimeConfig.modelNameDisplay);
+                }
+                // No auth yet (user hasn't /connect'd): return built-in defaults.
+                // This ensures models have the correct metadata (like api.url) to work with the plugin.
+                const effectiveModels = applyModelMetadataOverrides(OMNIROUTE_DEFAULT_MODELS, getRawUserModelMetadata(provider.options));
+                return toProviderModels(effectiveModels, baseUrl, providerNpm, getModelNameDisplay(provider.options));
+            },
+        },
+        auth: createAuthHook(),
+    };
+};
+function createAuthHook() {
+    return {
+        provider: OMNIROUTE_PROVIDER_ID,
+        methods: [
+            {
+                type: 'api',
+                label: 'API Key',
+            },
+        ],
+        loader: loadProviderOptions,
+    };
+}
+async function loadProviderOptions(getAuth, provider) {
+    const auth = await getAuth();
+    if (!auth || auth.type !== 'api') {
+        throw new Error("No API key available. Please run '/connect omniroute' to set up your OmniRoute connection.");
+    }
+    const config = createRuntimeConfig(provider.options, auth.key);
+    let models = [];
+    try {
+        const forceRefresh = config.refreshOnList !== false;
+        models = await fetchModels(config, config.apiKey, forceRefresh);
+        debug(`Available models: ${models.map((model) => sanitizeForLog(model.id)).join(', ')}`);
+    }
+    catch (error) {
+        warn(`Failed to fetch models, using defaults: ${error}`);
+        models = OMNIROUTE_DEFAULT_MODELS;
+    }
+    const effectiveModels = applyModelMetadataOverrides(models, getRawUserModelMetadata(provider.options));
+    const providerNpm = resolveProviderNpm(provider.npm, config.apiMode);
+    replaceProviderModels(provider, toProviderModels(effectiveModels, config.baseUrl, providerNpm, config.modelNameDisplay));
+    if (isRecord(provider.models)) {
+        debug(`Provider models hydrated: ${Object.keys(provider.models).length}`);
+    }
+    return {
+        apiKey: config.apiKey,
+        baseURL: config.baseUrl,
+        fetch: createFetchInterceptor(config),
+    };
+}
+export function createRuntimeConfig(options, apiKey) {
+    const baseUrl = getBaseUrl(options);
+    const modelCacheTtl = getPositiveNumber(options, 'modelCacheTtl');
+    const refreshOnList = getBoolean(options, 'refreshOnList');
+    const modelsDev = getModelsDevConfig(options);
+    const modelMetadata = getModelMetadataConfig(options);
+    const modelNameDisplay = getModelNameDisplay(options);
+    const hideModelAliases = getHideModelAliases(options);
+    const headers = getHeadersConfig(options);
+    return {
+        baseUrl,
+        apiKey,
+        apiMode: getApiMode(options),
+        modelCacheTtl,
+        refreshOnList,
+        modelsDev,
+        modelMetadata,
+        modelNameDisplay,
+        hideModelAliases,
+        headers,
+    };
+}
+export async function readAuthFromStore(providerId) {
+    try {
+        const dataHome = process.env.XDG_DATA_HOME || join(process.env.HOME || homedir(), '.local', 'share');
+        const authPath = join(dataHome, 'opencode', 'auth.json');
+        const content = await readFile(authPath, 'utf-8');
+        const data = JSON.parse(content);
+        if (!isRecord(data))
+            return null;
+        const auth = data[providerId];
+        if (!isRecord(auth))
+            return null;
+        return auth;
+    }
+    catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+            return null;
+        }
+        warn(`Unexpected error reading auth store: ${error}`);
+        return null;
+    }
+}
+function resolveProviderApi(api, apiMode) {
+    if (isApiMode(api)) {
+        if (api !== apiMode) {
+            warn(`provider.api (${sanitizeForLog(String(api))}) and options.apiMode (${sanitizeForLog(apiMode)}) differ; using options.apiMode`);
+        }
+        return apiMode;
+    }
+    if (typeof api === 'string') {
+        warn(`Unsupported provider.api value: ${sanitizeForLog(String(api))}. Using ${sanitizeForLog(apiMode)}.`);
+    }
+    return apiMode;
+}
+function resolveProviderNpm(npm, apiMode) {
+    const expected = getProviderNpm(apiMode);
+    if (typeof npm !== 'string' || !npm.trim()) {
+        return expected;
+    }
+    const current = npm.trim();
+    if (!isOmniRouteProviderNpm(current)) {
+        return current;
+    }
+    if (current !== expected) {
+        warn(`provider.npm (${sanitizeForLog(current)}) and options.apiMode (${sanitizeForLog(apiMode)}) ` +
+            `differ; using ${sanitizeForLog(expected)}.`);
+    }
+    return expected;
+}
+function getProviderNpm(apiMode) {
+    return apiMode === 'responses'
+        ? OMNIROUTE_RESPONSES_PROVIDER_NPM
+        : OMNIROUTE_CHAT_PROVIDER_NPM;
+}
+function isOmniRouteProviderNpm(value) {
+    return value === OMNIROUTE_CHAT_PROVIDER_NPM || value === OMNIROUTE_RESPONSES_PROVIDER_NPM;
+}
+function getApiMode(options) {
+    const value = options?.apiMode;
+    if (value === undefined) {
+        return 'chat';
+    }
+    if (isApiMode(value)) {
+        return value;
+    }
+    warn(`Unsupported apiMode option: ${sanitizeForLog(String(value))}. Using chat.`);
+    return 'chat';
+}
+function isApiMode(value) {
+    return value === 'chat' || value === 'responses';
+}
+const ENV_TEMPLATE_RE = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/;
+function resolveEnvTemplate(value) {
+    // Some hosts (OpenCode V2 plugin options) may pass config values through
+    // without resolving {env:...} templates. Fall back to the process
+    // environment for that case.
+    const match = ENV_TEMPLATE_RE.exec(value.trim());
+    if (!match) {
+        return value;
+    }
+    const envValue = process.env[match[1]];
+    return typeof envValue === 'string' && envValue.trim() !== '' ? envValue : value;
+}
+function getBaseUrl(options) {
+    const rawBaseUrl = options?.baseURL;
+    if (typeof rawBaseUrl !== 'string') {
+        return OMNIROUTE_ENDPOINTS.BASE_URL;
+    }
+    const trimmed = resolveEnvTemplate(rawBaseUrl).trim();
+    if (trimmed === '') {
+        return OMNIROUTE_ENDPOINTS.BASE_URL;
+    }
+    try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            warn(`Ignoring unsupported baseURL protocol: ${sanitizeForLog(parsed.protocol)}`);
+            return OMNIROUTE_ENDPOINTS.BASE_URL;
+        }
+        return trimmed;
+    }
+    catch {
+        warn(`Ignoring invalid baseURL: ${sanitizeForLog(trimmed)}`);
+        return OMNIROUTE_ENDPOINTS.BASE_URL;
+    }
+}
+function getPositiveNumber(options, key) {
+    const value = options?.[key];
+    if (typeof value === 'number' && value > 0) {
+        return value;
+    }
+    return undefined;
+}
+function getBoolean(options, key) {
+    const value = options?.[key];
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    return undefined;
+}
+function getModelNameDisplay(options) {
+    const value = options?.modelNameDisplay;
+    if (value === 'name' || value === 'id' || value === 'prefixed') {
+        return value;
+    }
+    if (value !== undefined) {
+        warn(`Unsupported modelNameDisplay option: ${sanitizeForLog(String(value))}. Using name.`);
+    }
+    return undefined;
+}
+function getHideModelAliases(options) {
+    const value = options?.hideModelAliases;
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    return undefined;
+}
+function getHeadersConfig(options) {
+    const raw = getStringRecord(options?.headers);
+    if (!raw)
+        return undefined;
+    const resolved = {};
+    for (const [key, value] of Object.entries(raw)) {
+        resolved[key] = resolveEnvTemplate(value);
+    }
+    return resolved;
+}
+function getModelsDevConfig(options) {
+    const raw = options?.modelsDev;
+    if (!isRecord(raw))
+        return undefined;
+    const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : undefined;
+    const url = typeof raw.url === 'string' && raw.url.trim() !== '' ? raw.url.trim() : undefined;
+    const cacheTtl = getPositiveNumber(raw, 'cacheTtl');
+    const timeoutMs = getPositiveNumber(raw, 'timeoutMs');
+    const providerAliases = getStringRecord(raw.providerAliases);
+    if (enabled === undefined &&
+        url === undefined &&
+        cacheTtl === undefined &&
+        timeoutMs === undefined &&
+        providerAliases === undefined) {
+        return undefined;
+    }
+    return {
+        ...(enabled !== undefined ? { enabled } : {}),
+        ...(url !== undefined ? { url } : {}),
+        ...(cacheTtl !== undefined ? { cacheTtl } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(providerAliases !== undefined ? { providerAliases } : {}),
+    };
+}
+function getModelMetadataConfig(options) {
+    const raw = options?.modelMetadata;
+    if (!raw)
+        return undefined;
+    if (Array.isArray(raw)) {
+        const filtered = raw.filter((item) => isRecord(item) && (typeof item.match === 'string' || coerceRegExp(item.match) !== null));
+        return filtered.length > 0 ? filtered : undefined;
+    }
+    if (isRecord(raw)) {
+        const hasAny = Object.values(raw).some((value) => isRecord(value));
+        return hasAny ? raw : undefined;
+    }
+    return undefined;
+}
+function getRawUserModelMetadata(options) {
+    if (!options)
+        return undefined;
+    const optionsWithRaw = options;
+    // Preserve raw user-authored modelMetadata separately from generated compatibility
+    // metadata. The non-enumerable Symbol is the in-memory fast path; if OpenCode
+    // clones/serializes options between lifecycle hooks, the internal option field
+    // survives and distinguishes "no raw metadata" (null) from generated metadata.
+    if (RAW_MODEL_METADATA in optionsWithRaw) {
+        return optionsWithRaw[RAW_MODEL_METADATA];
+    }
+    if (RAW_MODEL_METADATA_OPTION in options) {
+        return options[RAW_MODEL_METADATA_OPTION] === null
+            ? undefined
+            : options[RAW_MODEL_METADATA_OPTION];
+    }
+    return options.modelMetadata;
+}
+function setRawUserModelMetadata(options, rawUserConfig) {
+    options[RAW_MODEL_METADATA_OPTION] = serializeRawModelMetadataForOption(rawUserConfig) ?? null;
+    Object.defineProperty(options, RAW_MODEL_METADATA, {
+        value: rawUserConfig,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+    });
+}
+function serializeRawModelMetadataForOption(raw) {
+    if (!Array.isArray(raw))
+        return raw;
+    return raw.map((block) => {
+        if (!isRecord(block) || !isRegExp(block.match))
+            return block;
+        return {
+            ...block,
+            match: {
+                source: block.match.source,
+                flags: block.match.flags,
+            },
+        };
+    });
+}
+function getModelsGeneratedByPlugin(options) {
+    if (!options)
+        return false;
+    const optionsWithMarker = options;
+    if (MODELS_GENERATED_BY_PLUGIN in optionsWithMarker) {
+        return optionsWithMarker[MODELS_GENERATED_BY_PLUGIN] === true;
+    }
+    return options[MODELS_GENERATED_BY_PLUGIN_OPTION] === true;
+}
+function setModelsGeneratedByPlugin(options, generatedByPlugin) {
+    options[MODELS_GENERATED_BY_PLUGIN_OPTION] = generatedByPlugin ? true : null;
+    Object.defineProperty(options, MODELS_GENERATED_BY_PLUGIN, {
+        value: generatedByPlugin,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+    });
+}
+function hasProviderModels(provider) {
+    return Boolean(provider?.models && Object.keys(provider.models).length > 0);
+}
+function shouldRefreshProviderModels(provider) {
+    if (!hasProviderModels(provider))
+        return true;
+    if (getModelsGeneratedByPlugin(provider?.options))
+        return true;
+    return hasLegacyGeneratedProviderModels(provider?.models);
+}
+function hasLegacyGeneratedProviderModels(models) {
+    if (!isRecord(models))
+        return false;
+    const values = Object.values(models);
+    if (values.length === 0)
+        return false;
+    return values.every(isGeneratedOmniRouteProviderModel);
+}
+function isGeneratedOmniRouteProviderModel(value) {
+    if (!isRecord(value))
+        return false;
+    if (value.providerID !== OMNIROUTE_PROVIDER_ID)
+        return false;
+    if (!isRecord(value.api))
+        return false;
+    return typeof value.api.npm === 'string' && isOmniRouteProviderNpm(value.api.npm);
+}
+function reconcileExplicitModels(models, providerNpm, modelNameDisplay) {
+    if (!isRecord(models))
+        return models;
+    let changed = false;
+    const next = {};
+    for (const [id, model] of Object.entries(models)) {
+        if (!isRecord(model)) {
+            next[id] = model;
+            continue;
+        }
+        let updatedModel = model;
+        if (isRecord(model.api) && model.api.npm !== providerNpm) {
+            updatedModel = {
+                ...updatedModel,
+                api: {
+                    ...model.api,
+                    npm: providerNpm,
+                },
+            };
+        }
+        const expectedName = formatModelDisplayName(id, typeof model.name === 'string' ? model.name : id, modelNameDisplay);
+        const hasName = typeof model.name === 'string';
+        const nameMismatch = hasName && model.name !== expectedName;
+        const needsSyntheticName = !hasName && (modelNameDisplay === 'id' || modelNameDisplay === 'prefixed');
+        if (nameMismatch || needsSyntheticName) {
+            updatedModel = {
+                ...updatedModel,
+                name: expectedName,
+            };
+        }
+        if (updatedModel !== model) {
+            changed = true;
+        }
+        next[id] = updatedModel;
+    }
+    return changed ? next : models;
+}
+function getStringRecord(value) {
+    if (!isRecord(value))
+        return undefined;
+    const out = {};
+    for (const [key, raw] of Object.entries(value)) {
+        if (typeof raw !== 'string')
+            continue;
+        const trimmed = raw.trim();
+        if (!trimmed)
+            continue;
+        out[key] = trimmed;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+}
+function mergeModelMetadata(rawUserConfig, generated) {
+    const userConfig = getModelMetadataConfig({ modelMetadata: rawUserConfig });
+    if (Array.isArray(userConfig)) {
+        // Validate user-provided metadata blocks to prevent issues in OpenCode framework
+        const validUserConfig = userConfig.filter((block) => {
+            const validation = isValidModelMetadata(block);
+            if (!validation.valid) {
+                warn(`Invalid metadata block for match "${sanitizeForLog(String(block.match))}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
+                return false;
+            }
+            return true;
+        });
+        const generatedBlocks = Object.entries(generated).map(([id, metadata]) => ({
+            match: id,
+            ...metadata,
+        }));
+        // User config comes first so it takes precedence in first-match-wins systems
+        return [...validUserConfig, ...generatedBlocks];
+    }
+    if (userConfig && isRecord(userConfig)) {
+        const merged = { ...generated };
+        for (const [id, metadata] of Object.entries(userConfig)) {
+            const validation = isValidModelMetadata(metadata);
+            if (!validation.valid) {
+                warn(`Invalid metadata for model "${sanitizeForLog(id)}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
+                continue;
+            }
+            // If user uses an alias key (e.g., 'cx/gpt-5.5'), merge into canonical key
+            // so it matches the generated metadata and deduplicated model IDs
+            const canonicalId = resolveProviderAliasForMetadata(id);
+            merged[canonicalId] = {
+                ...(merged[canonicalId] ?? {}),
+                ...metadata,
+            };
+        }
+        return merged;
+    }
+    return generated;
+}
+export function applyModelMetadataOverrides(models, rawUserConfig) {
+    const userConfig = getModelMetadataConfig({ modelMetadata: rawUserConfig });
+    if (!userConfig)
+        return models;
+    if (Array.isArray(userConfig)) {
+        const processedBlocks = [];
+        for (const block of userConfig) {
+            const validation = isValidModelMetadata(block);
+            if (!validation.valid) {
+                warn(`Invalid metadata block for match "${sanitizeForLog(String(block.match))}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
+                continue;
+            }
+            const match = block.match;
+            const canonicalMatch = typeof match === 'string' ? resolveProviderAliasForMetadata(match) : null;
+            const metadata = extractModelMetadata(block);
+            processedBlocks.push({
+                match,
+                canonicalMatch,
+                metadata,
+                addIfMissing: block.addIfMissing === true,
+            });
+        }
+        const modelsWithOverrides = models.map((model) => {
+            const canonicalId = resolveProviderAliasForMetadata(model.id);
+            const processed = processedBlocks.find((candidate) => processedBlockMatches(candidate, model.id, canonicalId));
+            if (!processed)
+                return model;
+            return {
+                ...model,
+                ...processed.metadata,
+            };
+        });
+        const existingModels = modelsWithOverrides.map((model) => ({
+            id: model.id,
+            canonicalId: resolveProviderAliasForMetadata(model.id),
+        }));
+        const missingModels = [];
+        for (const processed of processedBlocks) {
+            if (!processed.addIfMissing || typeof processed.match !== 'string')
+                continue;
+            const id = processed.canonicalMatch ?? processed.match;
+            const alreadyExists = existingModels.some((model) => processedBlockMatches(processed, model.id, model.canonicalId)) || missingModels.some((model) => model.id === id);
+            if (alreadyExists)
+                continue;
+            missingModels.push({
+                id,
+                name: processed.metadata.name ?? id,
+                ...processed.metadata,
+            });
+        }
+        return [...modelsWithOverrides, ...missingModels];
+    }
+    const overrides = {};
+    for (const [id, metadata] of Object.entries(userConfig)) {
+        const validation = isValidModelMetadata(metadata);
+        if (!validation.valid) {
+            warn(`Invalid metadata for model "${sanitizeForLog(id)}" (field: ${sanitizeForLog(validation.field ?? '')}), skipping`);
+            continue;
+        }
+        const canonicalId = resolveProviderAliasForMetadata(id);
+        overrides[canonicalId] = {
+            ...(overrides[canonicalId] ?? {}),
+            ...extractModelMetadata(metadata),
+        };
+    }
+    return models.map((model) => {
+        const canonicalId = resolveProviderAliasForMetadata(model.id);
+        const metadata = overrides[canonicalId];
+        if (!metadata)
+            return model;
+        return {
+            ...model,
+            ...metadata,
+        };
+    });
+}
+function metadataBlockMatches(match, modelId, canonicalId) {
+    if (typeof match === 'string') {
+        const canonicalMatch = resolveProviderAliasForMetadata(match);
+        return (match === modelId ||
+            match === canonicalId ||
+            canonicalMatch === modelId ||
+            canonicalMatch === canonicalId);
+    }
+    return metadataMatcherMatches(match, modelId) || metadataMatcherMatches(match, canonicalId);
+}
+function processedBlockMatches(processed, modelId, canonicalId) {
+    if (typeof processed.match === 'string') {
+        return (processed.match === modelId ||
+            processed.match === canonicalId ||
+            processed.canonicalMatch === modelId ||
+            processed.canonicalMatch === canonicalId);
+    }
+    return metadataMatcherMatches(processed.match, modelId) || metadataMatcherMatches(processed.match, canonicalId);
+}
+function metadataMatcherMatches(match, modelId) {
+    const regexp = coerceRegExp(match);
+    if (!regexp)
+        return false;
+    regexp.lastIndex = 0;
+    return regexp.test(modelId);
+}
+const MODEL_METADATA_KEYS = [
+    'name',
+    'description',
+    'contextWindow',
+    'maxTokens',
+    'supportsStreaming',
+    'supportsVision',
+    'supportsTools',
+    'supportsTemperature',
+    'supportsReasoning',
+    'supportsAttachment',
+    'pricing',
+];
+function extractModelMetadata(value) {
+    return Object.fromEntries(MODEL_METADATA_KEYS
+        .filter((key) => Object.prototype.hasOwnProperty.call(value, key))
+        .map((key) => [key, value[key]]));
+}
+function isRegExp(value) {
+    return Object.prototype.toString.call(value) === '[object RegExp]';
+}
+function coerceRegExp(value) {
+    if (isRegExp(value))
+        return value;
+    if (!isRecord(value))
+        return null;
+    const source = value.source;
+    const flags = value.flags;
+    if (typeof source !== 'string' || typeof flags !== 'string')
+        return null;
+    try {
+        return new RegExp(source, flags);
+    }
+    catch {
+        return null;
+    }
+}
+function replaceProviderModels(provider, models) {
+    if (isRecord(provider.models)) {
+        for (const key of Object.keys(provider.models)) {
+            delete provider.models[key];
+        }
+        Object.assign(provider.models, models);
+        return;
+    }
+    provider.models = models;
+}
+const BOOLEAN_FIELDS = [
+    'supportsStreaming', 'supportsVision', 'supportsTools',
+    'supportsTemperature', 'supportsReasoning', 'supportsAttachment',
+];
+function isValidModelMetadata(value) {
+    if (!isRecord(value))
+        return { valid: false, field: '(not an object)' };
+    for (const field of BOOLEAN_FIELDS) {
+        if (field in value && typeof value[field] !== 'boolean') {
+            return { valid: false, field };
+        }
+    }
+    if ('contextWindow' in value && typeof value.contextWindow !== 'number') {
+        return { valid: false, field: 'contextWindow' };
+    }
+    if ('maxTokens' in value && typeof value.maxTokens !== 'number') {
+        return { valid: false, field: 'maxTokens' };
+    }
+    if ('name' in value && typeof value.name !== 'string') {
+        return { valid: false, field: 'name' };
+    }
+    if ('description' in value && typeof value.description !== 'string') {
+        return { valid: false, field: 'description' };
+    }
+    if ('pricing' in value) {
+        const pricing = value.pricing;
+        if (!isRecord(pricing)) {
+            return { valid: false, field: 'pricing' };
+        }
+        if ('input' in pricing && typeof pricing.input !== 'number') {
+            return { valid: false, field: 'pricing.input' };
+        }
+        if ('output' in pricing && typeof pricing.output !== 'number') {
+            return { valid: false, field: 'pricing.output' };
+        }
+    }
+    return { valid: true };
+}
+const PROVIDER_DISPLAY_LABEL_VALUES = new Set(Object.values(PROVIDER_DISPLAY_LABELS).map((label) => label.toLowerCase()));
+export function formatModelDisplayName(id, baseName, modelNameDisplay) {
+    if (modelNameDisplay === 'id') {
+        return id;
+    }
+    if (modelNameDisplay === 'prefixed') {
+        const origin = getModelOrigin(id);
+        if (!origin) {
+            return baseName;
+        }
+        const cleanBaseName = stripProviderPrefix(baseName);
+        return `${getPrettyOrigin(origin)} / ${cleanBaseName}`;
+    }
+    return baseName;
+}
+function getModelOrigin(modelId) {
+    const slashIndex = modelId.indexOf('/');
+    if (slashIndex > 0) {
+        return modelId.slice(0, slashIndex);
+    }
+    return undefined;
+}
+function getPrettyOrigin(origin) {
+    return PROVIDER_DISPLAY_LABELS[origin] ?? origin;
+}
+function stripProviderPrefix(name) {
+    const slashIndex = name.indexOf(' / ');
+    if (slashIndex <= 0) {
+        return name;
+    }
+    const prefix = name.slice(0, slashIndex);
+    const lowerPrefix = prefix.toLowerCase();
+    if (PROVIDER_DISPLAY_LABELS[lowerPrefix] ||
+        PROVIDER_ALIAS_TO_CANONICAL[lowerPrefix] ||
+        PROVIDER_DISPLAY_LABEL_VALUES.has(lowerPrefix)) {
+        return name.slice(slashIndex + 3);
+    }
+    return name;
+}
+/**
+ * Map OmniRoute models to OpenCode V1 provider model records.
+ */
+function toProviderModels(models, baseUrl, providerNpm, modelNameDisplay) {
+    const entries = models.map((model) => [
+        model.id,
+        toProviderModel(model, baseUrl, providerNpm, modelNameDisplay),
+    ]);
+    return Object.fromEntries(entries);
+}
+function toProviderModel(model, baseUrl, providerNpm, modelNameDisplay) {
+    const supportsVision = model.supportsVision === true;
+    // Default to true: if API doesn't explicitly say no tools, assume capability exists
+    // This aligns with OpenAI-compatible behavior where most models support tools
+    const supportsTools = model.supportsTools !== false;
+    const supportsTemperature = model.supportsTemperature !== false;
+    const supportsReasoning = model.supportsReasoning === true;
+    const supportsAttachment = model.supportsAttachment !== undefined
+        ? model.supportsAttachment
+        : supportsVision;
+    return {
+        id: model.id,
+        name: formatModelDisplayName(model.id, model.name || model.id, modelNameDisplay),
+        providerID: OMNIROUTE_PROVIDER_ID,
+        family: getModelFamily(model.id),
+        release_date: '',
+        attachment: supportsAttachment,
+        reasoning: supportsReasoning,
+        temperature: supportsTemperature,
+        tool_call: supportsTools,
+        modalities: {
+            input: supportsVision ? ['text', 'image'] : ['text'],
+            output: ['text'],
+        },
+        api: {
+            id: model.id,
+            url: baseUrl,
+            npm: providerNpm,
+        },
+        capabilities: {
+            temperature: supportsTemperature,
+            reasoning: supportsReasoning,
+            attachment: supportsAttachment,
+            toolcall: supportsTools,
+            input: {
+                text: true,
+                image: supportsVision,
+                audio: false,
+                video: false,
+                pdf: false,
+            },
+            output: {
+                text: true,
+                image: false,
+                audio: false,
+                video: false,
+                pdf: false,
+            },
+            interleaved: false,
+        },
+        cost: {
+            input: model.pricing?.input ?? 0,
+            output: model.pricing?.output ?? 0,
+            cache: {
+                read: 0,
+                write: 0,
+            },
+        },
+        limit: {
+            context: model.contextWindow ?? DEFAULT_CONTEXT_LIMIT,
+            output: resolveOutputLimit(model),
+        },
+        options: {},
+        headers: {},
+        status: 'active',
+        variants: model.variants && Object.keys(model.variants).length > 0
+            ? model.variants
+            : buildReasoningVariants(model),
+    };
+}
+export function getModelFamily(modelId) {
+    const withoutProvider = modelId.includes('/') ? modelId.split('/').pop() : modelId;
+    const [family] = withoutProvider.split('-');
+    return family || withoutProvider;
+}
+/**
+ * Create fetch interceptor for OmniRoute API
+ *
+ * @param config - OmniRoute configuration
+ * @returns Fetch interceptor function
+ */
+function createFetchInterceptor(config) {
+    const baseUrl = config.baseUrl || 'http://localhost:20128/v1';
+    return async (input, init) => {
+        // Properly extract URL from RequestInfo (handles Request objects correctly)
+        const url = input instanceof Request ? input.url : input.toString();
+        // Only intercept requests to the configured OmniRoute base URL
+        // Ensure baseUrl ends with a slash for safe prefix matching to prevent domain spoofing
+        const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+        const isOmniRouteRequest = url === baseUrl || url.startsWith(normalizedBaseUrl);
+        if (!isOmniRouteRequest) {
+            // Pass through non-OmniRoute requests
+            return fetch(input, init);
+        }
+        debug(`Intercepting request to ${sanitizeForLog(url)}`);
+        // Merge headers from Request and init to avoid dropping existing headers
+        const headers = new Headers(input instanceof Request ? input.headers : undefined);
+        if (init?.headers) {
+            const initHeaders = new Headers(init.headers);
+            initHeaders.forEach((value, key) => {
+                headers.set(key, value);
+            });
+        }
+        headers.set('Authorization', `Bearer ${config.apiKey}`);
+        headers.set('Content-Type', 'application/json');
+        if (config.headers) {
+            for (const [key, value] of Object.entries(config.headers)) {
+                headers.set(key, value);
+            }
+        }
+        const sanitizedBody = await sanitizeRequestPayload(input, init, url);
+        // Clone init to avoid mutating original
+        const modifiedInit = {
+            ...init,
+            headers,
+            ...(sanitizedBody !== undefined ? { body: sanitizedBody } : {}),
+        };
+        // Make the request
+        const response = await fetch(input, modifiedInit);
+        // Handle model fetching endpoint specially
+        if (url.includes('/v1/models') && response.ok) {
+            debug('Processing /v1/models response');
+        }
+        return normalizeChatUsageResponse(url, response);
+    };
+}
+async function getRawJsonBody(input, init) {
+    if (typeof init?.body === 'string') {
+        return init.body;
+    }
+    if (!(input instanceof Request)) {
+        return undefined;
+    }
+    if (init?.body !== undefined) {
+        return undefined;
+    }
+    const contentType = input.headers.get('content-type');
+    if (!contentType || !contentType.toLowerCase().includes('application/json')) {
+        return undefined;
+    }
+    return input.clone().text();
+}
+async function sanitizeRequestPayload(input, init, url) {
+    const rawBody = await getRawJsonBody(input, init);
+    return sanitizeChatPayload(rawBody, url);
+}
+//# sourceMappingURL=plugin.js.map

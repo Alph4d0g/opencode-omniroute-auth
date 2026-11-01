@@ -2,6 +2,97 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Refresh V2 discovery after boot-batched integration registration so stored native
+  credentials work immediately instead of waiting for the model-cache interval.
+- Refresh on credential changes, bind model inventory to its source connection, discard
+  stale account responses, and prevent pending discovery from publishing after disposal.
+- Clear revoked native keys and models without silently reviving legacy credentials.
+- Scope V2 HTTP hooks to the configured origin/path and remove stale content lengths
+  when sanitizing request bodies.
+- Forward configured gateway headers to model/combo discovery and V2 generation.
+- Isolate discovery caches by endpoint, effective API key, gateway headers, and alias
+  visibility; use the active key for combo enrichment.
+
+### Added
+
+- Regression coverage for gateway authentication, cache isolation and V2 lifecycle races.
+- `npm run test:opencode2`: isolated CLI smoke test covering discovery, generation,
+  Gemini tool schemas and native credential persistence across a server restart.
+
+## [2.1.3] - 2026-10-02
+
+### Fixed
+
+- **Default output limit raised from 4096 to 32 000 and validated** — when a model reports no usable `maxTokens`/`max_output_tokens`, the mappers (V1 `toProviderModel`, V2 `toV2Model`) previously fell back to `DEFAULT_OUTPUT_LIMIT = 4096`. The guessed cap starved reasoning models: with `reasoning_effort: high` the thinking budget alone consumed 4095 of 4096 output tokens, so the reply came back empty with the thinking truncated mid-word (observed on `mimo-v2.6-pro` via OmniRoute `call_logs`). The fallback is now 32 000 — OpenCode's own `OUTPUT_TOKEN_MAX`, i.e. exactly what OpenCode applies to models without a known limit. Non-positive and non-finite `maxTokens` values (`0`, `-1`, `NaN`, `Infinity`) now count as "not reported" instead of leaking into the limit. Known limits (e.g. OmniRoute catalog `max_output_tokens`) still pass through unchanged.
+
+  The limit cannot simply be omitted: OpenCode rejects a model whose `limit` object lacks `output` (verified on OpenCode 2.0.21 — such models fail with `Model unavailable`), and even a model with no `limit` at all still gets `max_completion_tokens: 32000` on the wire. (`src/models.ts`, `src/plugin.ts`, `src/plugin-v2.ts`, `src/constants.ts`)
+
+### Tests
+
+- Regression coverage: known `maxTokens` passes through, unknown falls back to 32 000, and non-positive/non-finite values count as unknown. (`test/plugin.test.mjs`, `test/plugin-v2.test.mjs`)
+
+## [2.1.2] - 2026-09-28
+
+### Fixed
+
+- **Readable error logging** — `String(error)` rendered thrown non-`Error` values as `[object Object]`, hiding the real cause. A new `describeError()` helper keeps `Error: message`, JSON-encodes plain objects, and falls back to `String`. (`src/logger.ts`, `src/plugin-v2.ts`, `src/http-sanitize.ts`)
+
+### Changed
+
+- **Clearer `unref()` guard for the model-refresh interval** — replaced the cryptic `typeof timer !== 'number'` check with an explicit object/`unref` check. (`src/plugin-v2.ts`)
+
+### Tests
+
+- **Removed the fixed `setTimeout(100)` wait** in the V2 combo-refresh test; it now polls until the combo request appears (2s deadline). (`test/plugin-v2.test.mjs`)
+- Added `describeError()` unit coverage. (`test/logger.test.mjs`)
+
+## [2.1.1] - 2026-09-28
+
+### Fixed
+
+- **`no-thinking` actually disables thinking on OpenCode V2** — V2 variant `settings` are provider-package options, and the `openai-compatible` driver silently drops unknown keys, so `chat_template_kwargs: { enable_thinking: false }` never reached the request body (confirmed in OmniRoute `call_logs`: the `no-thinking` request carried no `chat_template_kwargs` and vLLM kept thinking at its default tier). Variants are now split: provider options (`reasoningEffort`) stay in `settings`, everything else (e.g. `chat_template_kwargs`) goes to the variant `body`. (`src/plugin-v2.ts`)
+
+## [2.1.0] - 2026-09-28
+
+### Added
+
+- **Reasoning variants from advertised effort tiers + scoped `no-thinking`** — `toProviderModel` (V1) and `toV2Model` (V2) now build reasoning variants from OmniRoute's `capabilities.effort_tiers` (e.g. Qwen3.8 → `low/medium/xhigh`) instead of always synthesizing the generic `low/medium/high`, so the picker never shows a tier the model rejects (vLLM/Qwen answers `high` with a 400). For models that explicitly advertise effort tiers, a `no-thinking` variant is added that disables thinking via `chat_template_kwargs.enable_thinking=false` — the way local vLLM/llama.cpp models turn thinking off, since the gateway clamps `reasoning_effort: "none"` for passthrough providers. Models without advertised tiers keep the generic `low/medium/high` and never get an invented `no-thinking`. (`src/models.ts`, `src/plugin.ts`, `src/plugin-v2.ts`, `src/types.ts`)
+
+## [2.0.0] - 2026-09-28
+
+### Added
+
+- **OpenCode V2 support (dual V1/V2 entrypoint)** — The default export is now a definition object `{ id, setup, server }`. V2 hosts call `setup(ctx)` (integration + provider registration, scoped `http.request`/`http.response` hooks); V1 hosts ≥1.18.29 call `server(ctx)`. SDK imports are type-only, so neither SDK is a runtime dependency. (`src/plugin-v2.ts`, `index.ts`)
+- **`{env:...}` baseURL templates** — unresolved `{env:VAR}` templates in `baseURL` now fall back to `process.env`.
+
+### Fixed
+
+- **Combo fetch 401 on V2** — `config.apiKey` is synced before the model refresh, so combo enrichment no longer sends an empty `Authorization` header.
+
+### Changed
+
+- `dist/` is committed so git installs work without running build scripts (pnpm 10+ blocks them).
+
+## [1.2.3] - Unreleased
+
+### Added
+
+- **`modelNameDisplay` option** — New `OmniRouteConfig` option that controls how model names appear in the model picker. Set to `"id"` to show provider-qualified model IDs (e.g. `gh/gpt-5.5`) instead of human-readable names, which disambiguates entries when multiple providers serve the same base model. (`src/plugin.ts`, `src/types.ts`) (@Rahulsharma0810)
+- **`modelNameDisplay: "prefixed"` and `hideModelAliases`** — Extended the `modelNameDisplay` option with a `"prefixed"` mode that renders model names as `${provider} / ${name}` (e.g. `"OpenCode / Big Pickle"`) using a provider label map, and added `hideModelAliases` to filter out alias models that have a `parent` field in `/v1/models`. (`src/plugin.ts`, `src/models.ts`, `src/types.ts`, `src/constants.ts`)
+
+### Fixed
+
+- **Preserve provider/origin prefix in model picker** — OmniRoute models from different providers no longer share the same display name when `modelNameDisplay` is set to `"prefixed"`; aliases can also be hidden with `hideModelAliases`. (#29)
+- **Exclude cached tokens from chat usage** — `prompt_tokens` and `total_tokens` in `/chat/completions` responses now exclude `prompt_tokens_details.cached_tokens`, matching OpenCode's separate cached-input accounting. Applies to both JSON and streaming responses. (`src/plugin.ts`) (@makcimbx)
+- **Use `@ai-sdk/openai` for responses mode** — When `apiMode` is `responses`, the plugin now selects `@ai-sdk/openai` as the provider package instead of `@ai-sdk/openai-compatible`, and reconciles explicit model `api.npm` values when the provider package changes. (`src/plugin.ts`) (@makcimbx)
+- **Strip Claude title reasoning effort** — The fetch interceptor now removes `reasoning_effort`/`reasoningEffort` from identified Claude title-generation requests, avoiding Anthropic OAuth temperature/thinking validation errors while preserving reasoning options for normal Claude chat requests. (`src/plugin.ts`) (@thomasmaerz)
+- **Fix SSE newline boundary corruption** — Corrected `normalizeSseChatUsageResponse` so `\r\n` sequences split across stream chunks no longer inject spurious empty lines into the event stream. (`src/plugin.ts`)
+- **Fix Claude title prompt detection short-circuit** — `isOpenCodeTitlePrompt` now checks `payload.input` even when `payload.messages` is present but does not contain the title prompt. (`src/plugin.ts`)
+
 ## [1.2.2] - 2026-05-22
 
 ### Added

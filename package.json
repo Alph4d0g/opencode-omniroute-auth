@@ -1,7 +1,7 @@
 {
   "name": "opencode-omniroute-auth",
-  "version": "1.2.2",
-  "description": "OpenCode authentication plugin for OmniRoute API with /connect command and dynamic model fetching",
+  "version": "2.1.3",
+  "description": "OpenCode V1/V2 authentication plugin for OmniRoute API with /connect command and dynamic model fetching",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,7 +25,8 @@
     "dev": "tsc --watch",
     "clean": "node -e \"const fs=require('fs');if(fs.existsSync('dist'))fs.rmSync('dist',{recursive:true});\"",
     "test": "npm run build && node --test test/*.test.mjs",
-    "check:exports": "node --input-type=module -e \"import('./dist/index.js').then((m)=>{if(typeof m.default!=='function'){throw new Error('Default export must be a function');}for(const [key,value] of Object.entries(m)){if(typeof value!=='function'){throw new Error('Root export '+key+' must be a function to satisfy plugin loader constraints');}}})\"",
+    "test:opencode2": "npm run build && node scripts/smoke-opencode2.mjs",
+    "check:exports": "node --input-type=module -e \"import('./dist/index.js').then((m)=>{const d=m.default;if(typeof d!=='object'||d===null){throw new Error('Default export must be an object with id/setup (V2) and server (V1)');}if(typeof d.id!=='string'||d.id.length===0){throw new Error('Default export id must be a non-empty string');}if(typeof d.setup!=='function'){throw new Error('Default export must expose setup() for OpenCode V2');}if(typeof d.server!=='function'){throw new Error('Default export must expose server() for OpenCode V1');}for(const [key,value] of Object.entries(m)){if(key==='default')continue;if(typeof value!=='function'&&typeof value!=='object'){throw new Error('Root export '+key+' must be a function or object');}}})\"",
     "prepublishOnly": "npm run clean && npm run build && npm run check:exports"
   },
   "keywords": [
@@ -49,9 +50,21 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+    "@opencode-ai/plugin": "*",
+    "@opencode/plugin": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.29",
+    "@opencode/plugin": "^2.0.18",
+    "@opencode/schema": "^2.0.18",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
   },

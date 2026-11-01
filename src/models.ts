@@ -1,5 +1,6 @@
 import type { OmniRouteConfig, OmniRouteModel, OmniRouteModelVariant, OmniRouteModelsResponse } from './types.js';
 import {
+  DEFAULT_OUTPUT_LIMIT,
   OMNIROUTE_DEFAULT_MODELS,
   OMNIROUTE_ENDPOINTS,
   MODEL_CACHE_TTL,
@@ -17,6 +18,7 @@ import {
 import type { ModelsDevIndex, ModelsDevModel } from './models-dev.js';
 import { enrichComboModels, clearComboCache, splitModelId } from './omniroute-combos.js';
 import { warn, debug } from './logger.js';
+import { createDiscoveryHeaders, getDiscoveryCacheKey } from './discovery.js';
 
 /**
  * Model cache entry
@@ -27,7 +29,7 @@ interface ModelCache {
 }
 
 /**
- * In-memory model cache keyed by endpoint and API key
+ * In-memory model cache keyed by endpoint, API key, headers, and enrichment options
  */
 const modelCache = new Map<string, ModelCache>();
 
@@ -35,8 +37,6 @@ const modelCache = new Map<string, ModelCache>();
  * Generate a cache key for a given configuration
  */
 function getCacheKey(config: OmniRouteConfig, apiKey: string): string {
-  const baseUrl = config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL;
-
   // Include modelsDev config in cache key to prevent stale data
   const modelsDevHash = config.modelsDev
     ? JSON.stringify({
@@ -46,7 +46,9 @@ function getCacheKey(config: OmniRouteConfig, apiKey: string): string {
       })
     : '';
 
-  return `${baseUrl}:${apiKey}:${modelsDevHash}`;
+  return JSON.stringify([
+    getDiscoveryCacheKey(config, apiKey), modelsDevHash, config.hideModelAliases === true,
+  ]);
 }
 
 /**
@@ -64,6 +66,11 @@ function normalizeModel(model: OmniRouteModel): OmniRouteModel {
     id: model.id,
     name: model.name || model.id,
     description: model.description || `OmniRoute model: ${model.id}`,
+
+    // Preserve OpenAI-compatible origin metadata for display/filtering
+    owned_by: model.owned_by,
+    root: model.root,
+    parent: model.parent,
 
     // Context limits: prefer explicit camelCase, fallback to snake_case
     contextWindow:
@@ -95,7 +102,59 @@ function normalizeModel(model: OmniRouteModel): OmniRouteModel {
       model.supportsTemperature ??
       model.temperature ??
       capabilities.temperature,
+    effortTiers: model.effortTiers ?? capabilities.effort_tiers,
   };
+}
+
+/**
+ * The reasoning-effort tiers that map to a `reasoningEffort` variant value.
+ * "none" is deliberately absent — no-thinking is expressed through
+ * `chat_template_kwargs` (see `buildReasoningVariants`), not `reasoning_effort`.
+ */
+const THINKING_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+type ThinkingEffort = (typeof THINKING_EFFORTS)[number];
+
+/**
+ * Build the reasoning variants for a model.
+ *
+ * OmniRoute advertises the real tiers in `capabilities.effort_tiers` (e.g.
+ * Qwen3.8 → `low/medium/xhigh`). When present they win over the generic
+ * `low/medium/high` fallback, so the picker never shows a tier the model does
+ * not support (vLLM/Qwen rejects `high` with 400).
+ *
+ * A `no-thinking` variant is added only for models that explicitly advertise
+ * effort tiers — that is the gateway's signal that the model's thinking is
+ * operator-controlled (typically a local OpenAI-compatible model such as
+ * vLLM/llama.cpp). Those disable thinking via `chat_template_kwargs.enable_thinking`,
+ * which the gateway forwards verbatim, rather than `reasoning_effort: "none"`
+ * (which OmniRoute clamps for passthrough providers). Models without advertised
+ * tiers keep the generic `low/medium/high` with no `no-thinking`, so the variant
+ * is never invented for models that cannot honor it.
+ */
+export function buildReasoningVariants(
+  model: OmniRouteModel,
+): Record<string, OmniRouteModelVariant> {
+  const advertised = (model.effortTiers ?? []).filter(
+    (tier): tier is ThinkingEffort =>
+      typeof tier === 'string' &&
+      (THINKING_EFFORTS as readonly string[]).includes(tier),
+  );
+  const hasReasoning = model.supportsReasoning === true;
+
+  const variants: Record<string, OmniRouteModelVariant> = {};
+  if (advertised.length > 0) {
+    for (const tier of advertised) {
+      variants[tier] = { reasoningEffort: tier };
+    }
+    variants['no-thinking'] = { chat_template_kwargs: { enable_thinking: false } };
+    return variants;
+  }
+  if (hasReasoning) {
+    variants.low = { reasoningEffort: 'low' };
+    variants.medium = { reasoningEffort: 'medium' };
+    variants.high = { reasoningEffort: 'high' };
+  }
+  return variants;
 }
 
 /**
@@ -258,6 +317,23 @@ export function groupVariantModels(models: OmniRouteModel[]): OmniRouteModel[] {
 }
 
 /**
+ * Resolve the output-token limit for a model, falling back to
+ * `DEFAULT_OUTPUT_LIMIT` when the upstream reports no usable value.
+ *
+ * Non-positive and non-finite values count as "not reported". The old
+ * fallback (4096) starved reasoning models: with `reasoning_effort: high` the
+ * thinking budget alone could consume the whole cap, so the reply came back
+ * empty with the thinking truncated mid-word. The limit cannot be omitted
+ * instead — OpenCode rejects models whose `limit` lacks `output`.
+ */
+export function resolveOutputLimit(model: OmniRouteModel): number {
+  const value = model.maxTokens;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_OUTPUT_LIMIT;
+}
+
+/**
  * Fetch models from OmniRoute /v1/models endpoint
  * This is the CRITICAL FEATURE - dynamically fetches available models
  *
@@ -288,7 +364,7 @@ export async function fetchModels(
   }
 
   // Use default baseUrl if not provided to prevent undefined URL
-  const baseUrl = config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL;
+  const baseUrl = (config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL).replace(/\/+$/, '');
   const modelsUrl = `${baseUrl}${OMNIROUTE_ENDPOINTS.MODELS}`;
 
   debug(`Fetching models from ${modelsUrl}`);
@@ -299,11 +375,7 @@ export async function fetchModels(
   try {
     const response = await fetch(modelsUrl, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers: createDiscoveryHeaders(config, apiKey),
       signal: controller.signal,
     });
 
@@ -337,9 +409,12 @@ export async function fetchModels(
       )
       .map(normalizeModel);
 
-    const dedupedModels = deduplicateModels(rawModels);
+    const visibleModels = config.hideModelAliases
+      ? rawModels.filter((model) => !model.parent)
+      : rawModels;
+    const dedupedModels = deduplicateModels(visibleModels);
     const groupedModels = groupVariantModels(dedupedModels);
-    const models = await enrichModelMetadata(groupedModels, config);
+    const models = await enrichModelMetadata(groupedModels, { ...config, apiKey });
 
     // Update cache
     modelCache.set(cacheKey, {

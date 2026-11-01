@@ -4,8 +4,10 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
-# Build output
-dist/
+# Build output.
+# NOTE: dist/ is committed on purpose so git installs (pnpm add github:...)
+# work without running build scripts (pnpm 10+ blocks them unless allowlisted).
+# Rebuild before committing: npm run build
 build/
 *.tsbuildinfo
 
@@ -46,3 +48,4 @@ temp/
 
 # Local planning artifacts
 docs/superpowers/
+.omo/
