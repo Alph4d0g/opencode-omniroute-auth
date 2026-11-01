@@ -2,12 +2,10 @@
 
 🔌 Authentication plugin for [OpenCode](https://opencode.ai) to connect to an [OmniRoute](https://omniroute.ai) API instance.
 
-This fork builds on [Alph4d0g's original plugin](https://github.com/Alph4d0g/opencode-omniroute-auth)
-and the OpenCode V2 work in [LazyGatto's fork](https://github.com/LazyGatto/opencode-omniroute-auth)
-and [Rahulsharma0810's fork](https://github.com/Rahulsharma0810/opencode-omniroute-auth).
-It adds fixes for V2 credentials, account switching, gateway headers, and discovery caches.
-Install this version from **ilya-com87/opencode-omniroute-auth on GitHub** using the commands below.
-The upstream npm package (`opencode-omniroute-auth@1.x`) only works on V1.
+Supports OpenCode V1 and V2, including native V2 credentials, account switching,
+gateway headers, and authenticated model discovery. For OpenCode V2, install the
+GitHub version below until a compatible npm release is published. The currently
+published `opencode-omniroute-auth@1.x` package only works on V1.
 
 ## Compatibility
 
@@ -43,23 +41,22 @@ The plugin has **no runtime dependency on the OpenCode SDK**: all SDK imports ar
 
 ```bash
 # npm
-npm install github:ilya-com87/opencode-omniroute-auth
+npm install github:Alph4d0g/opencode-omniroute-auth
 
 # pnpm
-pnpm add github:ilya-com87/opencode-omniroute-auth
+pnpm add github:Alph4d0g/opencode-omniroute-auth
 
 # yarn
-yarn add github:ilya-com87/opencode-omniroute-auth
+yarn add github:Alph4d0g/opencode-omniroute-auth
 
 # bun
-bun add github:ilya-com87/opencode-omniroute-auth
+bun add github:Alph4d0g/opencode-omniroute-auth
 ```
 
 The installed package name remains `opencode-omniroute-auth`; use that name in your config.
 
 This installs the latest commit of `main`. To pin a revision, append `#<commit-sha>`
-to the GitHub package specifier. Registry packages published by other forks do not include
-this fork's unreleased changes.
+to the GitHub package specifier. Changes on `main` may not yet be available on npm.
 
 **Where to install.** OpenCode resolves plugin packages by walking up the directory tree from the config it loads, looking in `node_modules`. Run the install command in:
 
@@ -456,10 +453,9 @@ cold startup. It does not test a remote OmniRoute deployment. Validated with CLI
 
 ### Publishing to npm
 
-This fork is distributed through GitHub. Its changes have not been published to npm.
-Before any future registry release, select a package name owned by the publisher,
-update the version and changelog, and run `npm test` and `npm run prepublishOnly`.
-The current unscoped name is retained for compatibility with Git installations.
+Before a registry release, update the version and changelog, and run `npm test` and
+`npm run prepublishOnly`. See [the release process](docs/release-process.md) for tagging
+and publishing instructions.
 
 ## Troubleshooting
 
@@ -489,16 +485,22 @@ If you see "Connection failed" when running `/connect omniroute`:
 
 ### Combo Fetch Returns 401
 
-`Failed to fetch combo data: 401` after startup means the combo request went out with an empty `Authorization` header. That was fixed in this fork (commit `f4c56a3`, shipped with the `v2.0.0` tag). Upgrade to the latest `main`/tag and restart OpenCode.
+Check the active OmniRoute credential and any required gateway headers. V2 discovery
+passes the resolved key to both model and combo requests. Upgrade to a compatible
+version and restart OpenCode after changing the installed package.
 
 ### pnpm 10+ `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`
 
-Current tags install cleanly — `dist/` is committed and there is no `prepare` script. If you pin a tag from before `562ab61`, either move to a newer tag or allowlist the build in your `pnpm-workspace.yaml`.
+Git revisions containing `dist/` install without a `prepare` script. If you pin an older
+revision without prebuilt output, build from source or allowlist the build in your
+`pnpm-workspace.yaml`.
 
 ## License
 
 MIT
 
-## Upstream
+## Acknowledgements
 
-Forked from [Alph4d0g/opencode-omniroute-auth](https://github.com/Alph4d0g/opencode-omniroute-auth). Upstream fixes are merged in from time to time; V2-specific changes live in this fork.
+OpenCode V2 support incorporates work from [LazyGatto](https://github.com/LazyGatto/opencode-omniroute-auth),
+[Rahulsharma0810](https://github.com/Rahulsharma0810/opencode-omniroute-auth), and
+[ilya-com87](https://github.com/ilya-com87/opencode-omniroute-auth).
