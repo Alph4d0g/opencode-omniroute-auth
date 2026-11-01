@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Refresh V2 discovery after boot-batched integration registration so stored native
+  credentials work immediately instead of waiting for the model-cache interval.
+- Refresh on credential changes, bind model inventory to its source connection, discard
+  stale account responses, and prevent pending discovery from publishing after disposal.
+- Clear revoked native keys and models without silently reviving legacy credentials.
+- Scope V2 HTTP hooks to the configured origin/path and remove stale content lengths
+  when sanitizing request bodies.
+- Forward configured gateway headers to model/combo discovery and V2 generation.
+- Isolate discovery caches by endpoint, effective API key, gateway headers, and alias
+  visibility; use the active key for combo enrichment.
+
+### Added
+
+- Regression coverage for gateway authentication, cache isolation and V2 lifecycle races.
+- `npm run test:opencode2`: isolated CLI smoke test covering discovery, generation,
+  Gemini tool schemas and native credential persistence across a server restart.
+
 ## [2.1.3] - 2026-10-02
 
 ### Fixed

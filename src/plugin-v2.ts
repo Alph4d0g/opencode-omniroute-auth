@@ -45,6 +45,13 @@ import {
 import { isRecord, normalizeChatUsageResponse, sanitizeChatPayload } from './http-sanitize.js';
 
 type Context = Plugin.Context;
+type Connection = Awaited<ReturnType<Context['integration']['connection']['active']>>;
+
+interface ResolvedCredential {
+  apiKey?: string;
+  connection?: Connection;
+  native: boolean;
+}
 
 const OMNIROUTE_PROVIDER_NAME = 'OmniRoute';
 
@@ -198,34 +205,40 @@ export function toV2Models(models: OmniRouteModel[], config: OmniRouteConfig): V
  * imported from the legacy `auth.json` by the V2 migration) -> legacy
  * `auth.json` store -> `OMNIROUTE_API_KEY` environment variable.
  */
-async function resolveApiKey(ctx: Context): Promise<string | undefined> {
+async function resolveCredential(ctx: Context, allowLegacy: boolean): Promise<ResolvedCredential> {
   try {
     const connection = await ctx.integration.connection.active(OMNIROUTE_PROVIDER_ID);
     if (connection) {
       const credential = await ctx.integration.connection.resolve(connection);
       if (credential && credential.type === 'key' && typeof credential.key === 'string' && credential.key) {
-        return credential.key;
+        return { apiKey: credential.key, connection, native: true };
       }
+      return { connection, native: true };
     }
   } catch (error) {
     debug(`V2 integration credential resolution failed: ${sanitizeForLog(describeError(error))}`);
+    return { native: true };
   }
+
+  if (!allowLegacy) return { native: true };
 
   const stored = await readAuthFromStore(OMNIROUTE_PROVIDER_ID);
   if (stored?.key) {
-    return stored.key;
+    return { apiKey: stored.key, native: false };
   }
 
   const envKey = process.env.OMNIROUTE_API_KEY;
-  return envKey && envKey.length > 0 ? envKey : undefined;
+  return { apiKey: envKey || undefined, native: false };
 }
 
 function buildProviderInfo(
   packageID: string,
-  baseUrl: string,
+  config: OmniRouteConfig,
   apiKey: string | undefined,
 ): Provider.Info {
-  const settings: Record<string, unknown> = { baseURL: baseUrl };
+  const settings: Record<string, unknown> = { baseURL: config.baseUrl };
+  const headers: Record<string, string> = {};
+  new Headers(config.headers).forEach((value, name) => { headers[name] = value; });
   if (apiKey) {
     settings.apiKey = apiKey;
   }
@@ -233,10 +246,11 @@ function buildProviderInfo(
   return {
     id: OMNIROUTE_PROVIDER_ID as unknown as ProviderID,
     name: OMNIROUTE_PROVIDER_NAME,
-    activation: 'enabled',
+    activation: apiKey ? 'enabled' : 'auto',
     package: packageID,
     integrationID: OMNIROUTE_PROVIDER_ID as unknown as IntegrationID,
     settings,
+    ...(config.headers ? { headers } : {}),
   };
 }
 
@@ -251,8 +265,13 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
   // The plugin owns the provider: it registers driver, settings, and models.
   const config = createRuntimeConfig(options, '');
 
-  const state: { apiKey: string | undefined; models: V2ModelInfo[] } = {
-    apiKey: await resolveApiKey(ctx),
+  const state: {
+    apiKey?: string;
+    connection?: Connection;
+    native: boolean;
+    models: V2ModelInfo[];
+  } = {
+    native: false,
     models: toV2Models(OMNIROUTE_DEFAULT_MODELS, config),
   };
 
@@ -260,6 +279,10 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
   //    offers an API key form and the credential store is addressable.
   try {
     await ctx.integration.transform((editor) => {
+      editor.method.update({
+        integrationID: OMNIROUTE_PROVIDER_ID,
+        method: { type: 'env', names: ['OMNIROUTE_API_KEY'] },
+      });
       editor.method.update({
         integrationID: OMNIROUTE_PROVIDER_ID,
         method: { type: 'key', label: 'API Key' },
@@ -275,6 +298,8 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
     warn(`OmniRoute V2: failed to register integration: ${sanitizeForLog(describeError(error))}`);
   }
 
+  Object.assign(state, await resolveCredential(ctx, true));
+
   // 2. Provider registration. The transform must be synchronous and
   //    replayable: it reads the current state from the closure, so the
   //    refreshed model list and key are picked up by `ctx.provider.reload()`.
@@ -284,55 +309,53 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
       : OMNIROUTE_CHAT_PROVIDER_PACKAGE;
 
   await ctx.provider.transform((editor) => {
-    const existing = editor.get(OMNIROUTE_PROVIDER_ID);
-    if (existing) {
-      // Config may define a base provider (possibly without a driver package,
-      // e.g. the legacy `provider.omniroute` entry); fill in everything the
-      // plugin owns.
-      editor.update(OMNIROUTE_PROVIDER_ID, (provider) => {
-        provider.name = OMNIROUTE_PROVIDER_NAME;
-        provider.activation = 'enabled';
-        provider.package = providerPackage;
-        provider.integrationID = OMNIROUTE_PROVIDER_ID as unknown as IntegrationID;
-        const settings: Record<string, unknown> = { baseURL: config.baseUrl };
-        if (state.apiKey) {
-          settings.apiKey = state.apiKey;
-        }
-        provider.settings = settings;
-      });
-      editor.models.set(OMNIROUTE_PROVIDER_ID, state.models as unknown as Model.Info[]);
-    } else {
-      editor.add({
-        info: buildProviderInfo(providerPackage, config.baseUrl, state.apiKey),
-        models: state.models as unknown as Model.Info[],
-      });
-    }
+    editor.add({
+      info: buildProviderInfo(providerPackage, config, state.apiKey),
+      models: state.models as unknown as Model.Info[],
+      ...(state.connection ? { sourceConnection: state.connection } : {}),
+    });
   });
 
   // 3. Model fetching: initial pass + periodic refresh. When the key or the
   //    model list changes, replay the provider transform via reload().
   let disposed = false;
+  let pendingRefresh: Promise<void> | undefined;
+  let refreshRequested = false;
+  const eventsController = new AbortController();
 
-  const refreshModels = async (): Promise<void> => {
+  const refreshOnce = async (): Promise<void> => {
     if (disposed) {
       return;
     }
 
-    const key = await resolveApiKey(ctx);
-    if (key && key !== state.apiKey) {
-      state.apiKey = key;
-    }
-    if (!state.apiKey) {
+    const credential = await resolveCredential(ctx, !state.native);
+    if (disposed) return;
+    state.native ||= credential.native;
+    const key = credential.apiKey;
+    if (!key) {
+      const hadKey = state.apiKey !== undefined;
+      state.apiKey = undefined;
+      state.connection = undefined;
+      config.apiKey = '';
+      state.models = toV2Models(
+        applyModelMetadataOverrides(OMNIROUTE_DEFAULT_MODELS, options.modelMetadata), config,
+      );
+      if (hadKey) await ctx.provider.reload();
       return;
     }
 
-    // Keep the shared config in sync on every pass: fetchModels receives the
-    // key as a parameter, but combo enrichment (enrichComboModels ->
-    // fetchComboData) reads config.apiKey.
-    config.apiKey = state.apiKey;
+    // Each discovery pass captures its own key, including combo enrichment.
+    const runtimeConfig = { ...config, apiKey: key };
 
     try {
-      const fetched = await fetchModels(config, state.apiKey, config.refreshOnList !== false);
+      const fetched = await fetchModels(runtimeConfig, key, config.refreshOnList !== false);
+      if (disposed) return;
+      const current = await resolveCredential(ctx, !state.native);
+      if (disposed) return;
+      if (current.apiKey !== key || !sameConnection(current.connection, credential.connection)) {
+        refreshRequested = true;
+        return;
+      }
       const effective = applyModelMetadataOverrides(fetched, options.modelMetadata);
       const models = toV2Models(effective, config);
       if (models.length === 0) {
@@ -340,12 +363,47 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
         return;
       }
       state.models = models;
+      state.apiKey = key;
+      state.connection = credential.connection;
       await ctx.provider.reload();
       debug(`OmniRoute V2: published ${models.length} models`);
     } catch (error) {
       warn(`OmniRoute V2: model refresh failed: ${sanitizeForLog(describeError(error))}`);
     }
   };
+
+  const refreshModels = (): Promise<void> => {
+    if (disposed) return Promise.resolve();
+    refreshRequested = true;
+    if (pendingRefresh) return pendingRefresh;
+    pendingRefresh = (async () => {
+      while (refreshRequested && !disposed) {
+        refreshRequested = false;
+        await refreshOnce();
+      }
+    })().catch((error: unknown) => {
+      warn(`OmniRoute V2: credential refresh failed: ${sanitizeForLog(describeError(error))}`);
+    }).finally(() => { pendingRefresh = undefined; });
+    return pendingRefresh;
+  };
+
+  const watching = (async (): Promise<void> => {
+    try {
+      for await (const event of ctx.event.subscribe({ signal: eventsController.signal })) {
+        if (event.type === 'credential.switched'
+          && event.data.integrationID === OMNIROUTE_PROVIDER_ID) {
+          state.native = true;
+          void refreshModels();
+        } else if (event.type === 'credential.updated' || event.type === 'integration.updated') {
+          // Boot batches integration transforms until setup returns. This event
+          // makes native stored credentials visible without waiting for the TTL.
+          void refreshModels();
+        }
+      }
+    } catch {
+      if (!disposed) warn('OmniRoute V2: credential subscription stopped');
+    }
+  })();
 
   void refreshModels();
 
@@ -368,6 +426,11 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
     async (event) => {
       try {
         const request = event.request;
+        if (!isOmniRouteUrl(request.url, config.baseUrl)) return;
+
+        if (config.headers) {
+          new Headers(config.headers).forEach((value, name) => request.headers.set(name, value));
+        }
 
         // Fallback auth: the provider settings carry the key, but if the
         // driver did not attach it (e.g. key arrived after provider load),
@@ -394,6 +457,7 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
 
         const headers = new Headers(request.headers);
         headers.set('content-type', 'application/json');
+        headers.delete('content-length');
         event.request = new Request(request, { headers, body: sanitizedBody });
         debug(`OmniRoute V2: sanitized request payload for ${sanitizeForLog(url)}`);
       } catch (error) {
@@ -408,7 +472,7 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
     async (event) => {
       try {
         const url = event.request.url;
-        if (!url.includes('/chat/completions')) {
+        if (!isOmniRouteUrl(url, config.baseUrl) || !url.includes('/chat/completions')) {
           return;
         }
         event.response = await normalizeChatUsageResponse(url, event.response);
@@ -422,8 +486,26 @@ export async function setup(ctx: Context): Promise<() => Promise<void>> {
   return async () => {
     disposed = true;
     clearInterval(timer);
+    eventsController.abort();
+    await watching;
     await Promise.allSettled([requestRegistration.dispose(), responseRegistration.dispose()]);
   };
+}
+
+function isOmniRouteUrl(value: string, baseUrl: string): boolean {
+  const url = new URL(value);
+  const base = new URL(baseUrl);
+  const path = base.pathname.replace(/\/$/, '');
+  return url.origin === base.origin
+    && (url.pathname === path || url.pathname.startsWith(`${path}/`));
+}
+
+function sameConnection(left: Connection, right: Connection): boolean {
+  if (!left || !right) return left === right;
+  if (left.type !== right.type) return false;
+  return left.type === 'credential' && right.type === 'credential'
+    ? left.id === right.id
+    : left.type === 'env' && right.type === 'env' && left.name === right.name;
 }
 
 export const v2Definition = {

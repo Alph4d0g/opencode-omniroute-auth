@@ -2,15 +2,15 @@ import { DEFAULT_OUTPUT_LIMIT, OMNIROUTE_DEFAULT_MODELS, OMNIROUTE_ENDPOINTS, MO
 import { getModelsDevIndex, normalizeModelKey, getSubscriptionFallback, stripVariantSuffix, resolveProviderAlias, resolveModelAlias, } from './models-dev.js';
 import { enrichComboModels, clearComboCache, splitModelId } from './omniroute-combos.js';
 import { warn, debug } from './logger.js';
+import { createDiscoveryHeaders, getDiscoveryCacheKey } from './discovery.js';
 /**
- * In-memory model cache keyed by endpoint and API key
+ * In-memory model cache keyed by endpoint, API key, headers, and enrichment options
  */
 const modelCache = new Map();
 /**
  * Generate a cache key for a given configuration
  */
 function getCacheKey(config, apiKey) {
-    const baseUrl = config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL;
     // Include modelsDev config in cache key to prevent stale data
     const modelsDevHash = config.modelsDev
         ? JSON.stringify({
@@ -19,7 +19,9 @@ function getCacheKey(config, apiKey) {
             providerAliases: config.modelsDev.providerAliases,
         })
         : '';
-    return `${baseUrl}:${apiKey}:${modelsDevHash}`;
+    return JSON.stringify([
+        getDiscoveryCacheKey(config, apiKey), modelsDevHash, config.hideModelAliases === true,
+    ]);
 }
 /**
  * Normalize an OmniRoute model by reading all field variants
@@ -287,7 +289,7 @@ export async function fetchModels(config, apiKey, forceRefresh = false) {
         debug('Forcing model refresh');
     }
     // Use default baseUrl if not provided to prevent undefined URL
-    const baseUrl = config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL;
+    const baseUrl = (config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL).replace(/\/+$/, '');
     const modelsUrl = `${baseUrl}${OMNIROUTE_ENDPOINTS.MODELS}`;
     debug(`Fetching models from ${modelsUrl}`);
     const controller = new AbortController();
@@ -295,11 +297,7 @@ export async function fetchModels(config, apiKey, forceRefresh = false) {
     try {
         const response = await fetch(modelsUrl, {
             method: 'GET',
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-            },
+            headers: createDiscoveryHeaders(config, apiKey),
             signal: controller.signal,
         });
         if (!response.ok) {
@@ -329,7 +327,7 @@ export async function fetchModels(config, apiKey, forceRefresh = false) {
             : rawModels;
         const dedupedModels = deduplicateModels(visibleModels);
         const groupedModels = groupVariantModels(dedupedModels);
-        const models = await enrichModelMetadata(groupedModels, config);
+        const models = await enrichModelMetadata(groupedModels, { ...config, apiKey });
         // Update cache
         modelCache.set(cacheKey, {
             models,

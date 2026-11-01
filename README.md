@@ -1,10 +1,13 @@
 # OpenCode OmniRoute Auth Plugin
 
-[![npm](https://img.shields.io/npm/v/@lazygatto/opencode-omniroute-auth.svg)](https://www.npmjs.com/package/@lazygatto/opencode-omniroute-auth)
-
 🔌 Authentication plugin for [OpenCode](https://opencode.ai) to connect to an [OmniRoute](https://omniroute.ai) API instance.
 
-This is a fork of [Alph4d0g/opencode-omniroute-auth](https://github.com/Alph4d0g/opencode-omniroute-auth) (base: `v1.2.3`), extended with **OpenCode V2** support. Install it from npm as `@lazygatto/opencode-omniroute-auth`, or straight from this repo — the upstream npm package (`opencode-omniroute-auth@1.x`) only works on V1.
+This fork builds on [Alph4d0g's original plugin](https://github.com/Alph4d0g/opencode-omniroute-auth)
+and the OpenCode V2 work in [LazyGatto's fork](https://github.com/LazyGatto/opencode-omniroute-auth)
+and [Rahulsharma0810's fork](https://github.com/Rahulsharma0810/opencode-omniroute-auth).
+It adds fixes for V2 credentials, account switching, gateway headers, and discovery caches.
+Install this version from **ilya-com87/opencode-omniroute-auth on GitHub** using the commands below.
+The upstream npm package (`opencode-omniroute-auth@1.x`) only works on V1.
 
 ## Compatibility
 
@@ -36,46 +39,35 @@ The plugin has **no runtime dependency on the OpenCode SDK**: all SDK imports ar
 
 ## Installation
 
-The same release is available two ways — **use the package name that matches the route you installed from** in your config.
-
-### From npm (recommended)
-
-```bash
-npm install @lazygatto/opencode-omniroute-auth
-```
-
-Published as an **unofficial** fork under the `@lazygatto` scope. Use `"package": "@lazygatto/opencode-omniroute-auth"` in your config.
-
-### From GitHub (git spec)
+### From GitHub (recommended)
 
 ```bash
 # npm
-npm install github:LazyGatto/opencode-omniroute-auth
+npm install github:ilya-com87/opencode-omniroute-auth
 
 # pnpm
-pnpm add github:LazyGatto/opencode-omniroute-auth
+pnpm add github:ilya-com87/opencode-omniroute-auth
 
 # yarn
-yarn add github:LazyGatto/opencode-omniroute-auth
+yarn add github:ilya-com87/opencode-omniroute-auth
 
 # bun
-bun add github:LazyGatto/opencode-omniroute-auth
+bun add github:ilya-com87/opencode-omniroute-auth
 ```
 
-This route keeps the upstream package name, so use `"package": "opencode-omniroute-auth"` in your config — all examples below use that name; substitute the scoped one if you installed from npm.
+The installed package name remains `opencode-omniroute-auth`; use that name in your config.
 
-This installs the latest commit of `main`. To pin a release, add a ref:
-
-```bash
-npm install github:LazyGatto/opencode-omniroute-auth#v2.1.2
-```
+This installs the latest commit of `main`. To pin a revision, append `#<commit-sha>`
+to the GitHub package specifier. Registry packages published by other forks do not include
+this fork's unreleased changes.
 
 **Where to install.** OpenCode resolves plugin packages by walking up the directory tree from the config it loads, looking in `node_modules`. Run the install command in:
 
 - your **project root** — for a project-level config (`opencode.json` or `.opencode/` in the project), or
 - your **home directory** — for a global config (`~/.config/opencode/opencode.json`); the package lands in `~/node_modules`, which is visible when OpenCode walks up from `~/.config/opencode`.
 
-The git route lands in `node_modules/opencode-omniroute-auth` (the upstream package name), so it replaces any previously installed upstream copy in that `node_modules`. The npm route lands in `node_modules/@lazygatto/opencode-omniroute-auth` and can sit alongside it.
+The installation lands in `node_modules/opencode-omniroute-auth`, replacing any previously
+installed upstream copy in that `node_modules`.
 
 `dist/` is committed to the repository, so **no build script runs during install**. That also sidesteps pnpm 10+ `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` for git-hosted packages (no `prepare` script, no allowlist needed).
 
@@ -136,14 +128,24 @@ Then run `/connect omniroute` to store your key in `~/.local/share/opencode/auth
   - `apiMode: "responses"` → `@opencode/ai/providers/openai`
 - `Provider.Info.settings` receives `{ baseURL, apiKey }` directly into the driver.
 - `baseURL` supports `{env:VAR}` templates; an unresolved template is substituted from `process.env` as a last resort.
-- The model list is refreshed on an interval and (optionally) every time the model list is opened.
+- The V2 model list refreshes at startup, on integration/credential changes, and on an interval.
+  `refreshOnList: false` lets these refreshes reuse the discovery cache until its TTL expires.
 
 **Key resolution order:**
 
 1. Active `omniroute` integration credential (from `/connect omniroute`)
 2. Legacy `~/.local/share/opencode/auth.json` → `omniroute.key`
 3. `OMNIROUTE_API_KEY`
-4. As a last resort, an idempotent `Authorization: Bearer <key>` backfill in the `http.request` hook
+
+The legacy store and environment fallback apply during initial migration. Once the plugin
+observes a native V2 connection or a credential switch, V2 controls the active account.
+Removing that connection clears the previous key and account-specific models; it does not
+silently restore a legacy key. A registered environment connection remains selectable in V2.
+Stored native credentials are discovered after boot-time integration registration completes.
+
+The `http.request` hook backfills a missing Bearer header only for the configured OmniRoute
+origin and path. Configured gateway headers are also sent during model/combo discovery and
+generation. Discovery caches are separated by endpoint, API key, and normalized headers.
 
 ## Verifying the installation
 
@@ -434,23 +436,30 @@ npm run clean
 
 # Run tests (builds first)
 npm test
+
+# Check V1/V2 entrypoint shape
+npm run check:exports
+
+# Run the installed OpenCode V2 CLI against an isolated local mock API
+npm run test:opencode2
 ```
+
+The V2 smoke test requires `opencode2` on PATH on Unix. On Windows it defaults to
+`%APPDATA%/npm/node_modules/@opencode/cli/bin/opencode.exe`; set `OPENCODE2_BIN` to
+override the executable. It uses a temporary profile and fake credentials, verifies model
+discovery, authenticated generation, gateway headers and Gemini tool schemas, then stores
+a native credential and verifies discovery/generation after restarting without the API-key
+environment variable. It retries the host's temporary activation-unavailable response during
+cold startup. It does not test a remote OmniRoute deployment. Validated with CLI 2.1.1 and 2.2.4.
 
 `dist/` is committed to the repo: pnpm 10+ refuses to run build scripts for git-hosted packages unless they are allowlisted, so git installs must ship prebuilt output. After any source change, run `npm run build && git add dist` before committing.
 
 ### Publishing to npm
 
-The published package is `@lazygatto/opencode-omniroute-auth`, built from the `release/npm` branch (`main` keeps the upstream package name for git installs and for the upstream PR). To cut a release:
-
-```bash
-git checkout release/npm
-git merge main            # pick up new commits
-npm version patch         # or minor / major; the same version cannot be published twice
-git push origin release/npm
-npm publish               # prepublishOnly rebuilds dist + runs check:exports, then asks for the 2FA code
-```
-
-`npm publish` accepts `--otp=<code>` if the code is passed non-interactively. 2FA is `auth-and-writes` on this account, so `npm login --auth-type=web` does not bypass the publish prompt — an authenticator code is always required. Automation tokens that skip 2FA are being restricted by npm for direct publishing.
+This fork is distributed through GitHub. Its changes have not been published to npm.
+Before any future registry release, select a package name owned by the publisher,
+update the version and changelog, and run `npm test` and `npm run prepublishOnly`.
+The current unscoped name is retained for compatibility with Git installations.
 
 ## Troubleshooting
 

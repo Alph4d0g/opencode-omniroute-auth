@@ -8,6 +8,7 @@ import {
 } from './models-dev.js';
 import { REQUEST_TIMEOUT, OMNIROUTE_ENDPOINTS } from './constants.js';
 import { warn, debug } from './logger.js';
+import { createDiscoveryHeaders, getDiscoveryCacheKey } from './discovery.js';
 
 export function sanitizeForLog(value: string): string {
   // Remove all control characters except tab (0x09)
@@ -46,8 +47,8 @@ interface ComboCache {
   timestamp: number;
 }
 
-// In-memory cache for combo data
-let comboCache: ComboCache | null = null;
+// In-memory combo caches scoped to endpoint and authentication context.
+const comboCache = new Map<string, ComboCache>();
 const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 type ComboFetchOutcome =
@@ -62,13 +63,15 @@ type ComboFetchOutcome =
 export async function fetchComboData(
   config: OmniRouteConfig,
 ): Promise<Map<string, OmniRouteCombo> | null> {
-  const baseUrl = config.baseUrl;
+  const baseUrl = (config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL).replace(/\/+$/, '');
   const apiKey = config.apiKey;
+  const cacheKey = getDiscoveryCacheKey(config, apiKey);
 
   // Check cache first
-  if (comboCache && Date.now() - comboCache.timestamp < COMBO_CACHE_TTL) {
+  const cached = comboCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < COMBO_CACHE_TTL) {
     debug('Using cached combo data');
-    return comboCache.combos;
+    return cached.combos;
   }
 
   const v1CombosUrl = `${baseUrl.replace(/\/$/, '')}${OMNIROUTE_ENDPOINTS.COMBOS}`;
@@ -86,10 +89,7 @@ export async function fetchComboData(
     try {
       const response = await fetch(url, {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-        },
+        headers: createDiscoveryHeaders(config, apiKey),
         signal: controller.signal,
       });
 
@@ -125,10 +125,10 @@ export async function fetchComboData(
       }
 
       // Update cache
-      comboCache = {
+      comboCache.set(cacheKey, {
         combos: comboMap,
         timestamp: Date.now(),
-      };
+      });
 
       debug(`Successfully fetched ${comboMap.size} combos from ${url}`);
       return { kind: 'success', combos: comboMap };
@@ -156,7 +156,7 @@ export async function fetchComboData(
  * Clear the combo cache
  */
 export function clearComboCache(): void {
-  comboCache = null;
+  comboCache.clear();
   debug('Combo cache cleared');
 }
 
@@ -362,7 +362,7 @@ export function isComboModel(model: OmniRouteModel): boolean {
   }
 
   // Fallback: check if it's in our combo cache
-  if (comboCache?.combos?.has(model.id)) {
+  if ([...comboCache.values()].some((cached) => cached.combos.has(model.id))) {
     return true;
   }
 

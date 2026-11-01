@@ -303,7 +303,7 @@ test('setup registers integration, provider, and scoped http hooks', async () =>
   }
 });
 
-test('setup updates an existing config-defined provider row', async () => {
+test('setup replaces an existing config-defined provider row with its source inventory', async () => {
   const dataHome = makeDataHome();
   const restore = withAuthEnv({ dataHome, envKey: 'sk-from-env' });
 
@@ -327,9 +327,9 @@ test('setup updates an existing config-defined provider row', async () => {
     const cleanup = await setup(ctx);
 
     assert.equal(calls.providerTransform, 1);
-    assert.equal(calls.added, undefined, 'expected update, not add');
-    assert.equal(calls.updated.id, 'omniroute');
-    const provider = calls.updated.provider;
+    assert.ok(calls.added, 'replace inventory so its source connection can be updated');
+    assert.equal(calls.added.info.id, 'omniroute');
+    const provider = calls.added.info;
     assert.equal(provider.name, 'OmniRoute');
     assert.equal(provider.activation, 'enabled');
     assert.equal(provider.package, '@opencode/ai/providers/openai-compatible');
@@ -338,8 +338,7 @@ test('setup updates an existing config-defined provider row', async () => {
       baseURL: DEAD_BASE_URL,
       apiKey: 'sk-from-env',
     });
-    assert.equal(calls.modelsSet.id, 'omniroute');
-    assert.ok(calls.modelsSet.models.length > 0);
+    assert.ok(calls.added.models.length > 0);
 
     await cleanup();
   } finally {
@@ -398,7 +397,7 @@ test('refresh passes the resolved API key to combo enrichment', async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
-    requests.push({ url, auth: init?.headers?.Authorization ?? null });
+    requests.push({ url, auth: new Headers(init?.headers).get('Authorization') });
     if (url.includes('/models')) {
       return new Response(
         JSON.stringify({ data: [{ id: 'auto/best-coding', name: 'Best Coding', owned_by: 'combo' }] }),
@@ -473,7 +472,7 @@ test('http.request hook adds bearer auth and sanitizes the payload', async () =>
       ],
     });
     const event = {
-      request: new Request(`https://omni.example/v1/chat/completions`, {
+      request: new Request(`${DEAD_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: geminiBody,
@@ -502,7 +501,7 @@ test('http.request hook adds bearer auth and sanitizes the payload', async () =>
       ],
     });
     const claudeEvent = {
-      request: new Request(`https://omni.example/v1/chat/completions`, {
+      request: new Request(`${DEAD_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -520,7 +519,7 @@ test('http.request hook adds bearer auth and sanitizes the payload', async () =>
 
     // 3) Plain payload that needs no change is forwarded as-is.
     const plainEvent = {
-      request: new Request(`https://omni.example/v1/chat/completions`, {
+      request: new Request(`${DEAD_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: 'Bearer x' },
         body: JSON.stringify({ model: 'gpt-5', messages: [] }),
@@ -563,7 +562,7 @@ test('http.response hook normalizes cached usage on /chat/completions', async ()
       headers: { 'content-type': 'application/json' },
     });
     const event = {
-      request: new Request('https://omni.example/v1/chat/completions'),
+      request: new Request(`${DEAD_BASE_URL}/chat/completions`),
       response: original,
     };
     await resHook.cb(event);

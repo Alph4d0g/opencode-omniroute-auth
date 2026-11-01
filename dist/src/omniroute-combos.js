@@ -1,24 +1,27 @@
 import { modelsDevToMetadata, calculateLowestCommonCapabilities, resolveProviderAlias, normalizeModelKey, } from './models-dev.js';
 import { REQUEST_TIMEOUT, OMNIROUTE_ENDPOINTS } from './constants.js';
 import { warn, debug } from './logger.js';
+import { createDiscoveryHeaders, getDiscoveryCacheKey } from './discovery.js';
 export function sanitizeForLog(value) {
     // Remove all control characters except tab (0x09)
     return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
-// In-memory cache for combo data
-let comboCache = null;
+// In-memory combo caches scoped to endpoint and authentication context.
+const comboCache = new Map();
 const COMBO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 /**
  * Fetch combo data from OmniRoute /v1/combos endpoint
  * Falls back to /api/combos on HTTP 404 for older OmniRoute versions.
  */
 export async function fetchComboData(config) {
-    const baseUrl = config.baseUrl;
+    const baseUrl = (config.baseUrl || OMNIROUTE_ENDPOINTS.BASE_URL).replace(/\/+$/, '');
     const apiKey = config.apiKey;
+    const cacheKey = getDiscoveryCacheKey(config, apiKey);
     // Check cache first
-    if (comboCache && Date.now() - comboCache.timestamp < COMBO_CACHE_TTL) {
+    const cached = comboCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < COMBO_CACHE_TTL) {
         debug('Using cached combo data');
-        return comboCache.combos;
+        return cached.combos;
     }
     const v1CombosUrl = `${baseUrl.replace(/\/$/, '')}${OMNIROUTE_ENDPOINTS.COMBOS}`;
     const legacyCombosUrl = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')}/api/combos`;
@@ -29,10 +32,7 @@ export async function fetchComboData(config) {
         try {
             const response = await fetch(url, {
                 method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    Accept: 'application/json',
-                },
+                headers: createDiscoveryHeaders(config, apiKey),
                 signal: controller.signal,
             });
             if (!response.ok) {
@@ -62,10 +62,10 @@ export async function fetchComboData(config) {
                 }
             }
             // Update cache
-            comboCache = {
+            comboCache.set(cacheKey, {
                 combos: comboMap,
                 timestamp: Date.now(),
-            };
+            });
             debug(`Successfully fetched ${comboMap.size} combos from ${url}`);
             return { kind: 'success', combos: comboMap };
         }
@@ -91,7 +91,7 @@ export async function fetchComboData(config) {
  * Clear the combo cache
  */
 export function clearComboCache() {
-    comboCache = null;
+    comboCache.clear();
     debug('Combo cache cleared');
 }
 /**
@@ -257,7 +257,7 @@ export function isComboModel(model) {
         return true;
     }
     // Fallback: check if it's in our combo cache
-    if (comboCache?.combos?.has(model.id)) {
+    if ([...comboCache.values()].some((cached) => cached.combos.has(model.id))) {
         return true;
     }
     return false;

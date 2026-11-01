@@ -25,6 +25,7 @@
     "dev": "tsc --watch",
     "clean": "node -e \"const fs=require('fs');if(fs.existsSync('dist'))fs.rmSync('dist',{recursive:true});\"",
     "test": "npm run build && node --test test/*.test.mjs",
+    "test:opencode2": "npm run build && node scripts/smoke-opencode2.mjs",
     "check:exports": "node --input-type=module -e \"import('./dist/index.js').then((m)=>{const d=m.default;if(typeof d!=='object'||d===null){throw new Error('Default export must be an object with id/setup (V2) and server (V1)');}if(typeof d.id!=='string'||d.id.length===0){throw new Error('Default export id must be a non-empty string');}if(typeof d.setup!=='function'){throw new Error('Default export must expose setup() for OpenCode V2');}if(typeof d.server!=='function'){throw new Error('Default export must expose server() for OpenCode V1');}for(const [key,value] of Object.entries(m)){if(key==='default')continue;if(typeof value!=='function'&&typeof value!=='object'){throw new Error('Root export '+key+' must be a function or object');}}})\"",
     "prepublishOnly": "npm run clean && npm run build && npm run check:exports"
   },
@@ -41,11 +42,11 @@
   "author": "",
   "repository": {
     "type": "git",
-    "url": "https://github.com/LazyGatto/opencode-omniroute-auth.git"
+    "url": "https://github.com/ilya-com87/opencode-omniroute-auth.git"
   },
-  "homepage": "https://github.com/LazyGatto/opencode-omniroute-auth#readme",
+  "homepage": "https://github.com/ilya-com87/opencode-omniroute-auth#readme",
   "bugs": {
-    "url": "https://github.com/LazyGatto/opencode-omniroute-auth/issues"
+    "url": "https://github.com/ilya-com87/opencode-omniroute-auth/issues"
   },
   "license": "MIT",
   "peerDependencies": {
